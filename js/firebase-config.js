@@ -6,10 +6,8 @@
 // ================================================================
 
 const FIREBASE_CONFIG = {
-    apiKey: "AIzaSyDMScYrCRdOlyWEBGrnOXfSeT-rlqvrdJc",
-    authDomain: "finance-app-2dc6f.firebaseapp.com",
-    projectId: "finance-app-2dc6f",
-    storageBucket: "finance-app-2dc6f.firebasestorage.app",
-    messagingSenderId: "456644045894",
-    appId: "1:456644045894:web:f33a330c853246dd8aae47"
+    apiKey: 'PASTE_API_KEY',
+    authDomain: 'PASTE_PROJECT_ID.firebaseapp.com',
+    projectId: 'PASTE_PROJECT_ID',
+    appId: 'PASTE_APP_ID'
 };

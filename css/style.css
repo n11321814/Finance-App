@@ -1667,3 +1667,52 @@ body.privacy :is(
     .topbar-right .btn { flex: 1; }
     .sidebar .footer .year-picker { width: auto; flex: 1; margin: 0; }
 }
+
+/* ================================================================
+   PHONES - only applies to narrow screens; desktop is unchanged
+   ================================================================ */
+@media (max-width: 600px) {
+    .main { padding: 14px 10px 40px; }
+    .card { padding: 16px 14px; margin-bottom: 14px; }
+    .card-header { flex-wrap: wrap; gap: 8px; }
+
+    /* Cards in two-column layouts shrink to the screen instead of
+       pushing it wider */
+    .grid-2 > *, .grid-3 > * { min-width: 0; }
+
+    /* Summary bar: two figures per row instead of one long column */
+    .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 14px; }
+    .stat-card { padding: 12px 12px 10px; }
+    .stat-card::before { left: 12px; }
+    .stat-card.wide, .stat-card.wide-lg { grid-column: span 2; }
+    .stat-card:last-child { grid-column: span 2; }
+
+    /* Budget names shorten instead of overlapping the amount */
+    .budget-input-item > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Rows of 3 or 4 figure tiles become 2 per row */
+    .tab-content [style*="grid-template-columns:repeat(4,1fr)"],
+    .tab-content [style*="grid-template-columns:repeat(3,1fr)"],
+    .tab-content [style*="grid-template-columns:1fr 1fr 1fr"] {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    /* Forms: fields wrap two to a row at a usable size, buttons full width */
+    .form-row > input, .form-row > select { flex: 1 1 130px !important; max-width: none !important; }
+    .form-row > input[type="text"]:first-child { flex-basis: 100% !important; }   /* titles and names get a full row */
+    .form-row > .btn { flex: 1 1 100%; }
+    input, select, textarea { font-size: 16px; }   /* stops phones zooming in on tap */
+
+    /* Wide tables scroll sideways with the first column kept in view */
+    .mbh-table .mbh-cat-name, .mbh-table .mbh-cat-header,
+    .cfp-table .cfp-month-label {
+        position: sticky; left: 0; z-index: 1; background: var(--surface);
+    }
+
+    /* Short two-column breakdowns fit the screen instead of scrolling */
+    .tab-content table[style*="min-width:420px"] { min-width: 0 !important; }
+    .tab-content table[style*="min-width:420px"] td { white-space: normal; }
+
+    /* Calendar: swipe across the week with the times kept in view */
+    .calendar-time-col { position: sticky; left: 0; z-index: 2; background: var(--surface); }
+}

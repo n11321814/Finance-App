@@ -204,7 +204,8 @@ function renderLoanLineGraph() {
     const numYTicks = Math.round(yMax / tickSpacing);
     
     const containerWidth = container.clientWidth || 900;
-    const graphWidth = Math.max(containerWidth, 600);
+    // Phones draw it at screen width; elsewhere at least 600px
+    const graphWidth = Math.max(containerWidth, window.innerWidth <= 600 ? 280 : 600);
     const graphHeight = 320;
     
     const margin = { top: 30, right: 30, bottom: 40, left: 70 };
@@ -241,7 +242,9 @@ function renderLoanLineGraph() {
     }
     
     let xLabels = '';
-    const yearStep = Math.max(1, Math.floor((maxYear - minYear) / 8));
+    // Fewer year labels when the chart is narrow (phones)
+    const narrow = graphWidth < 500;
+    const yearStep = Math.max(1, Math.floor((maxYear - minYear) / (narrow ? 4 : 8)));
     for (let y = Math.floor(minYear / yearStep) * yearStep; y <= maxYear; y += yearStep) {
         if (y >= minYear) {
             const x = getX(y);
@@ -259,14 +262,15 @@ function renderLoanLineGraph() {
     const currentX = getX(currentPoint.year);
     const currentY = getY(currentPoint.balance);
     
-    let dataPoints = points.filter(p => p.marker).map((p) => {
+    // On narrow charts label every second point (and the payoff) so they don't overlap
+    let dataPoints = points.filter(p => p.marker).map((p, i) => {
         const x = getX(p.year);
         const y = getY(p.balance);
         const isZero = p.balance === 0;
         const roundedBalance = Math.round(p.balance / 5000) * 5000;
         const label = isZero ? '✓ Paid off!' : '$' + (roundedBalance / 1000).toFixed(0) + 'k';
         return `<circle cx="${x}" cy="${y}" r="${isZero ? 5 : 3.5}" fill="${isZero ? 'var(--green)' : 'var(--blue)'}" />
-                <text x="${x}" y="${y - 10}" class="data-label" font-size="10" fill="var(--text-secondary)" text-anchor="middle">${label}</text>`;
+                ${narrow && i % 2 && !isZero ? '' : `<text x="${x}" y="${y - 10}" class="data-label" font-size="10" fill="var(--text-secondary)" text-anchor="middle">${label}</text>`}`;
     }).join(' ');
     
     const willPayOff = points.some(p => p.balance === 0);
