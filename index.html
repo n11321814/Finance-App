@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Finance Tracker</title>
+    <link rel="icon" type="image/svg+xml" href="img/logo.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div id="signinScreen" class="signin-screen" style="display:none;">
+    <div class="signin-card">
+        <img src="img/logo.svg" alt="" width="44" height="44" />
+        <span class="wordmark">FINANCE<span class="wordmark-accent">TRACKER</span></span>
+        <button id="signinBtn" class="btn btn-primary" onclick="signIn()">Sign in with Google</button>
+        <span id="signinMessage" class="signin-message"></span>
+    </div>
+</div>
+
+<header class="topbar">
+    <div class="topbar-left">
+        <img class="topbar-logo" src="img/logo.svg" alt="Finance Tracker logo" width="28" height="28" />
+        <span class="wordmark">FINANCE<span class="wordmark-accent">TRACKER</span></span>
+        <span class="topbar-fy">FY <span id="fyYear">2026–2027</span> · JUL <span id="fyStartYear">2026</span> – JUN <span id="fyEndYear">2027</span></span>
+    </div>
+    <div class="topbar-right">
+        <span class="header-status" id="fileStatus">● Not signed in</span>
+        <span class="header-status saving" id="unsavedBadge" style="display:none;" title="Changes not saved yet">● Unsaved changes</span>
+        <button class="btn btn-outline btn-sm" id="privacyBtn" onclick="togglePrivacy()" title="Blur income, net worth, loan and investment figures so you can show the app to others">Hide figures</button>
+        <button class="btn btn-primary btn-sm" onclick="saveData()">Save</button>
+        <button class="btn btn-outline btn-sm" onclick="forceReloadData()" title="Discard unsaved edits and load the saved version">Reload</button>
+        <button class="btn btn-outline btn-sm" onclick="startNewFinancialYear()" title="Archive this year and start the next">New FY</button>
+    </div>
+</header>
+
+<div class="shell">
+
+    <aside class="sidebar">
+        <nav class="tabs">
+            <button class="tab active" data-tab="dashboard"><span class="tab-num">01</span>Dashboard</button>
+            <button class="tab" data-tab="income"><span class="tab-num">02</span>Income</button>
+            <button class="tab" data-tab="expenses"><span class="tab-num">03</span>Expenses</button>
+            <button class="tab" data-tab="home"><span class="tab-num">04</span>Home</button>
+            <button class="tab" data-tab="tax"><span class="tab-num">05</span>Tax</button>
+            <button class="tab" data-tab="networth"><span class="tab-num">06</span>Net Worth</button>
+            <button class="tab" data-tab="calendar"><span class="tab-num">07</span>Calendar</button>
+            <button class="tab" data-tab="lists"><span class="tab-num">08</span>Lists</button>
+            <button class="tab" data-tab="rates"><span class="tab-num">09</span>Rates</button>
+            <button class="tab" data-tab="investments"><span class="tab-num">10</span>Investments</button>
+            <button class="tab" data-tab="planning"><span class="tab-num">11</span>Planning</button>
+        </nav>
+        <div class="footer">
+            <span class="footer-label">YEAR</span>
+            <select id="yearPicker" class="year-picker" onchange="switchYear(this.value)"></select>
+            <div class="footer-actions">
+                <button class="btn btn-outline btn-sm" onclick="importFiles()" title="Load data files from your computer into your account">Import</button>
+                <button class="btn btn-outline btn-sm" onclick="downloadBackup()" title="Download this year as a JSON file">Backup</button>
+            </div>
+            <span class="path" id="signedInAs"></span>
+            <button class="footer-link" onclick="signOut()">Sign out</button>
+        </div>
+    </aside>
+
+    <main class="main">
+
+
+    <!-- STATS -->
+    <div class="stats-grid" id="statsGrid">
+        <div class="stat-card">
+            <div class="stat-label">Average Weekly Hours</div>
+            <div class="stat-value c-hours" id="avgHours">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Average Weekly Income</div>
+            <div class="stat-value c-income" id="avgWeeklyIncome"><span class="currency">$</span>0</div>
+        </div>
+        <div class="stat-card wide wide-lg">
+            <div class="stat-label">Weekly Disposable</div>
+            <div class="stat-value purple" id="weeklyDisposable"><span class="currency">$</span>0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Projected Annual Income</div>
+            <div class="stat-value c-projected" id="projectedIncome"><span class="currency">$</span>0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Net Worth</div>
+            <div class="stat-value c-networth" id="netWorth"><span class="currency">$</span>0</div>
+        </div>
+        <div class="stat-card wide">
+            <div class="stat-label">Expenses % of Income</div>
+            <div class="stat-value" id="budgetStatus">0%</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Living in Home Cost</div>
+            <div class="stat-value c-living" id="livingInHomeCost"><span class="currency">$</span>0</div>
+        </div>
+    </div>
+
+    <!-- TAB: DASHBOARD -->
+    <div class="tab-content active" id="tab-dashboard">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Monthly Expenses</div>
+            </div>
+            <div id="monthlyExpensesChart"></div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Cash Flow Projection</div>
+            </div>
+            <div id="cashFlowProjection"></div>
+        </div>
+        <div class="grid-2">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">Weather</div>
+                    <span class="badge">Brisbane, QLD</span>
+                </div>
+                <div id="weatherWidget">
+                    <div class="weather-error"><span style="font-size:20px;">⏳</span><span>Loading forecast...</span></div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">News</div>
+                    <span class="badge">Links</span>
+                </div>
+                <div id="newsWidget">
+                    <div class="weather-error"><span style="font-size:20px;">⏳</span><span>Loading...</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- TAB: INCOME -->
+    <div class="tab-content" id="tab-income">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Weekly Hours</div>
+            </div>
+            <div class="form-row" style="border-bottom:1px solid var(--border-color);padding-bottom:14px;margin-bottom:14px;">
+                <input type="date" id="addWeekDate" title="Any day in the week (weeks run Thursday to Wednesday)" style="max-width:170px;" />
+                <button class="btn btn-success" onclick="addEmptyWeek()">+ Add Week</button>
+                <button class="btn btn-outline" onclick="addFutureWeek()" title="Add the week after the latest one in the list">+ Add Future Week</button>
+                <span style="font-size:11px;color:var(--text-muted);">Next week is added automatically each Monday.</span>
+            </div>
+            <div id="incomeList"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Pay Rates</div>
+                <span class="badge">Public holiday rates</span>
+            </div>
+            <div style="display:flex; gap:16px; flex-wrap:wrap;">
+                <div class="rate-card">
+                    <div class="rate-label">Avanale (Job 1)</div>
+                    <input class="rate-input" id="rateJob1" type="number" step="0.01" onchange="updateRates()" />
+                    <div class="ph-rate-row">
+                        <label>PH rate</label>
+                        <input class="rate-input" id="phRateJob1" type="number" step="0.01" onchange="updateRates()" style="color:var(--amber);" />
+                    </div>
+                    <div class="rate-stats" id="job1PayNote" style="color:var(--text-muted);"></div>
+                    <div class="rate-stats">
+                        Avg hours: <strong id="job1Hours">0</strong> ·
+                        Projected: <strong id="job1Projected">$0</strong>
+                    </div>
+                </div>
+                <div class="rate-card">
+                    <div class="rate-label">Cinema (Job 2)</div>
+                    <input class="rate-input" id="rateJob2" type="number" step="0.01" onchange="updateRates()" />
+                    <div class="ph-rate-row">
+                        <label>PH rate</label>
+                        <input class="rate-input" id="phRateJob2" type="number" step="0.01" onchange="updateRates()" style="color:var(--amber);" />
+                    </div>
+                    <div class="rate-stats" id="job2PayNote" style="color:var(--text-muted);"></div>
+                    <div class="rate-stats">
+                        Avg hours: <strong id="job2Hours">0</strong> ·
+                        Projected: <strong id="job2Projected">$0</strong>
+                    </div>
+                </div>
+                <div class="rate-card">
+                    <div class="rate-label">Theiss (Job 3)</div>
+                    <input class="rate-input" id="rateJob3" type="number" step="0.01" onchange="updateRates()" />
+                    <div class="ph-rate-row">
+                        <label>PH rate</label>
+                        <input class="rate-input" id="phRateJob3" type="number" step="0.01" onchange="updateRates()" style="color:var(--amber);" />
+                    </div>
+                    <div class="ph-rate-row">
+                        <label>Paid</label>
+                        <select class="rate-input" id="job3PayFrequency" onchange="updateRates()">
+                            <option value="weekly">Weekly</option>
+                            <option value="fortnightly">Fortnightly</option>
+                        </select>
+                    </div>
+                    <div class="ph-rate-row">
+                        <label>Days after week ends</label>
+                        <input class="rate-input" id="job3PayLag" type="number" step="1" min="0" onchange="updateRates()" title="Weeks end on Wednesday: 0 = paid that Wednesday, 5 = the following Monday" />
+                    </div>
+                    <div class="ph-rate-row">
+                        <label>A recent payday</label>
+                        <input class="rate-input" id="job3PayAnchor" type="date" onchange="updateRates()" title="Only needed for fortnightly pay, to line up the cycle" />
+                    </div>
+                    <div class="rate-stats" id="job3PayNote" style="color:var(--text-muted);"></div>
+                    <div class="ph-rate-row">
+                        <label>Starts</label>
+                        <input class="rate-input" id="job3Start" type="date" onchange="updateRates()" />
+                    </div>
+                    <div class="ph-rate-row">
+                        <label>Ends</label>
+                        <input class="rate-input" id="job3End" type="date" onchange="updateRates()" />
+                    </div>
+                    <div class="ph-rate-row">
+                        <label>Hrs / week</label>
+                        <input class="rate-input" id="job3ExpectedHours" type="number" step="0.5" min="0" onchange="updateRates()" title="Expected hours per week, used for weeks you haven't logged yet. 0 = use your logged average." />
+                    </div>
+                    <div class="rate-stats">
+                        Avg hours: <strong id="job3Hours">0</strong> ·
+                        Projected: <strong id="job3Projected">$0</strong>
+                    </div>
+                    <div class="rate-stats" id="job3EndNote" style="color:var(--text-muted);"></div>
+                </div>
+            </div>
+            <div class="rate-stats" style="margin-top:10px;color:var(--text-muted);">
+                "Projected" is this financial year: pay already logged plus expected pay for the weeks still to come.
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Income Summary</div>
+            </div>
+            <div class="income-summary-grid" id="incomeSummary"></div>
+        </div>
+    </div>
+
+    <!-- TAB: EXPENSES -->
+    <div class="tab-content" id="tab-expenses">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Add Expense</div>
+            </div>
+            <div class="form-row">
+                <input type="date" id="expenseDate" style="max-width:140px;" />
+                <select id="expenseCategory" style="max-width:160px;"></select>
+                <input type="text" id="expenseDesc" placeholder="Description" style="min-width:120px;" />
+                <input type="number" id="expenseAmount" placeholder="Amount ($)" step="0.01" style="max-width:110px;" />
+                <div class="checkbox-group">
+                    <input type="checkbox" id="expenseDeductible" />
+                    <label for="expenseDeductible">Deductible</label>
+                </div>
+                <button class="btn btn-danger" onclick="addExpense()">+ Add</button>
+            </div>
+            <div class="form-row" style="align-items:center;margin-bottom:6px;">
+                <span style="font-size:12px;color:var(--text-muted);">Show</span>
+                <select id="expenseFilterCategory" style="max-width:180px;" onchange="setExpenseFilter(this.value)"></select>
+                <span id="expenseFilterTotal" class="private" style="font-size:12px;color:var(--text-muted);"></span>
+            </div>
+            <div class="scroll-y" id="expenseList"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Categories</div>
+            </div>
+            <div class="category-input-group" style="margin-bottom:8px;">
+                <input type="text" id="newCategoryName" placeholder="New category" style="min-width:140px;" />
+                <button class="btn btn-primary btn-sm" onclick="addCategory()">+ Add</button>
+            </div>
+            <div class="category-container" id="categoryList"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Monthly Budgets</div>
+            </div>
+            <div id="budgetInput"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Monthly Budget History</div>
+            </div>
+            <div id="monthlyBudgetHistory"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Expense Summary</div>
+            </div>
+            <div id="expenseSummary"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Expense Breakdown</div>
+            </div>
+            <div id="expenseBreakdown"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Average Week (completed months)</div>
+            </div>
+            <div id="actualSnapshot"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Average Monthly Spend</div>
+            </div>
+            <div id="categoryMonthlyAverage"></div>
+        </div>
+    </div>
+
+    <!-- TAB: HOME -->
+    <div class="tab-content" id="tab-home">
+        <div class="grid-2">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">Home Loan</div>
+                </div>
+                <div class="form-row">
+                    <input type="number" id="loanInitial" placeholder="Initial Loan Amount" />
+                    <input type="number" id="loanCurrentBalance" placeholder="Current Balance" />
+                </div>
+                <div class="form-row">
+                    <input type="number" id="loanRate" placeholder="Rate %" step="0.01" />
+                    <input type="date" id="loanStartDate" placeholder="Loan Start Date" />
+                    <input type="number" id="loanTerm" placeholder="Term (Years)" />
+                </div>
+                <div class="form-row">
+                    <input type="number" id="offsetBalance" placeholder="Offset Balance" />
+                    <button class="btn btn-primary" onclick="updateLoan()">Update Loan</button>
+                </div>
+                <div id="loanDetails" class="mt-16"></div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">Renovation Costs</div>
+                </div>
+                <div class="form-row">
+                    <input type="text" id="renoItem" placeholder="Item" />
+                    <input type="number" id="renoCost" placeholder="Cost ($)" step="0.01" style="max-width:120px;" />
+                    <button class="btn btn-amber" onclick="addRenovation()">+ Add</button>
+                </div>
+                <div class="scroll-y" id="renovationList"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Home Loan Payoff Projection</div>
+            </div>
+            <div id="payoffSummary"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Loan Balance Projection</div>
+            </div>
+            <div id="loanLineGraph"></div>
+        </div>
+    </div>
+
+    <!-- TAB: TAX -->
+    <div class="tab-content" id="tab-tax">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">End-of-Year Summary</div>
+            </div>
+            <div id="eoySummary" class="private"></div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Tax Summary</div>
+            </div>
+            <div class="tax-summary-grid" id="taxSummary"></div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Tax Brackets</div>
+            </div>
+            <div id="taxBracketEditor"></div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Deductible Expenses</div>
+            </div>
+            <div id="deductibleList"></div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Tax Projection</div>
+            </div>
+            <div id="taxProjection"></div>
+        </div>
+    </div>
+
+    <!-- TAB: NET WORTH -->
+    <div class="tab-content" id="tab-networth">
+        <div class="balance-sheet">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">Assets</div>
+                </div>
+                <div class="form-row">
+                    <input type="text" id="assetName" placeholder="Asset" value="House" />
+                    <input type="number" id="assetValue" placeholder="Value ($)" step="0.01" />
+                    <button class="btn btn-success" onclick="addAsset()">+ Add</button>
+                </div>
+                <div id="assetList"></div>
+                <div class="balance-col mt-16" style="border:none;padding:12px 0 0 0;">
+                    <div class="total green" id="totalAssets">Total Assets: $0</div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">Liabilities</div>
+                </div>
+                <div class="form-row">
+                    <input type="text" id="liabilityName" placeholder="Liability (e.g. Car loan)" value="" />
+                    <input type="number" id="liabilityValue" placeholder="Value ($)" step="0.01" />
+                    <button class="btn btn-danger" onclick="addLiability()">+ Add</button>
+                </div>
+                <div id="liabilityList"></div>
+                <div class="balance-col mt-16" style="border:none;padding:12px 0 0 0;">
+                    <div class="total red" id="totalLiabilities">Total Liabilities: $0</div>
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Net Worth Summary</div>
+            </div>
+            <div id="netWorthSummary"></div>
+        </div>
+    </div>
+
+    <!-- TAB: CALENDAR -->
+    <div class="tab-content" id="tab-calendar">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Add Event</div>
+            </div>
+            <div class="form-row">
+                <input type="text" id="eventTitle" placeholder="Title" style="flex:2;" />
+                <input type="date" id="eventDate" />
+                <input type="time" id="eventStart" value="09:00" />
+                <input type="time" id="eventEnd" value="10:00" />
+            </div>
+            <div class="form-row">
+                <input type="text" id="eventDetails" placeholder="Details (optional)" style="flex:2;" />
+                <select id="eventRecurrence">
+                    <option value="none">Does not repeat</option>
+                    <option value="weekly">Repeats weekly</option>
+                    <option value="fortnightly">Repeats fortnightly</option>
+                    <option value="monthly">Repeats monthly</option>
+                    <option value="yearly">Repeats yearly</option>
+                </select>
+                <input type="date" id="eventRecurrenceEnd" placeholder="Repeat until (optional)" title="Repeat until (optional)" />
+                <button class="btn btn-success" onclick="addEvent()">+ Add Event</button>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title" id="calendarWeekLabel">This Week</div>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-outline btn-sm" onclick="calendarShiftWeek(-1)">&larr; Prev</button>
+                    <button class="btn btn-outline btn-sm" onclick="calendarGoToday()">Today</button>
+                    <button class="btn btn-outline btn-sm" onclick="calendarShiftWeek(1)">Next &rarr;</button>
+                </div>
+            </div>
+            <div id="calendarGrid" class="calendar-wrap"></div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">All Events</div>
+                <span class="badge">Including recurring series</span>
+            </div>
+            <div id="eventList"></div>
+        </div>
+    </div>
+
+    <!-- TAB: INVESTMENTS -->
+    <div class="tab-content" id="tab-investments">
+        <div id="investmentsTracker"></div>
+    </div>
+
+    <!-- TAB: PLANNING -->
+    <div class="tab-content" id="tab-planning">
+        <div id="planningTracker"></div>
+    </div>
+
+    <!-- TAB: RATES -->
+    <div class="tab-content" id="tab-rates">
+        <div id="rateTracker"></div>
+    </div>
+
+    <!-- TAB: LISTS -->
+    <div class="tab-content" id="tab-lists">
+        <div id="listsContainer" class="lists-container"></div>
+    </div>
+
+    </main>
+
+</div>
+
+<!-- ============================================================
+   JAVASCRIPT - All modular files
+   ============================================================ -->
+<script src="js/vendor/firebase-app-compat.js"></script>
+<script src="js/vendor/firebase-auth-compat.js"></script>
+<script src="js/vendor/firebase-firestore-compat.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/data.js"></script>
+<script src="js/file.js"></script>
+<script src="js/stats.js"></script>
+<script src="js/charts.js"></script>
+<script src="js/expenses.js"></script>
+<script src="js/income.js"></script>
+<script src="js/budgets.js"></script>
+<script src="js/loan.js"></script>
+<script src="js/renovation.js"></script>
+<script src="js/tax.js"></script>
+<script src="js/networth.js"></script>
+<script src="js/calendar.js"></script>
+<script src="js/lists.js"></script>
+<script src="js/weather-news.js"></script>
+<script src="js/rate-tracker.js"></script>
+<script src="js/investments.js"></script>
+<script src="js/planning.js"></script>
+<script src="js/summary.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,20 @@
+rules_version = '2';
+
+// Each signed-in person can only read and write their own data:
+//   users/{uid}               which year to open
+//   users/{uid}/years/{year}  one financial year
+// Everything else is closed.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+
+      match /years/{year} {
+        allow read, delete: if request.auth != null && request.auth.uid == uid;
+        allow create, update: if request.auth != null && request.auth.uid == uid
+          && request.resource.data.json is string
+          && request.resource.data.rev is int;
+      }
+    }
+  }
+}
