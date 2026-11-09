@@ -16,7 +16,7 @@ const vm = require('vm');
 
 const JS_DIR = path.join(__dirname, '..', 'js');
 const MODULES = ['data.js', 'file.js', 'stats.js', 'charts.js', 'expenses.js', 'income.js', 'budgets.js', 'loan.js',
-    'renovation.js', 'tax.js', 'networth.js', 'calendar.js', 'lists.js', 'weather-news.js', 'rate-tracker.js', 'investments.js', 'planning.js', 'summary.js', 'ui.js'];
+    'renovation.js', 'tax.js', 'networth.js', 'calendar.js', 'lists.js', 'shopping-data.js', 'shopping.js', 'meals-excel.js', 'backup-excel.js', 'weather-news.js', 'rate-tracker.js', 'investments.js', 'planning.js', 'summary.js', 'ui.js'];
 
 // Data as the app would store it (normalised), for seeding the fake database
 function normalizeForTest(app, raw) {
@@ -882,6 +882,220 @@ function ok(cond, msg) { if (!cond) throw new Error(msg || 'condition false'); }
     app.run("clearDoneItems('L')");
     test('Lists: Clear done removes the done items only', () => eq(app.run("appData.lists[0].items.map(i => i.text).join()"), 'Bread,Milk'));
 }
+
+// ================================================================
+// SHOPPING
+// ================================================================
+{
+    const app = makeApp('2026-11-15T09:00:00+10:00');
+    app.load(sampleData());
+    const run = code => app.run(code);
+    const totals = () => JSON.parse(run("JSON.stringify(mealPlanTotals())"));
+    const item = name => totals().items.find(i => i.name === name);
+    test('Shopping: a new file starts with the default items', () => ok(run("getShopping().items.length") > 150 && run("getShopping().items.some(i => i.name === 'Garam masala' && i.kind === 'stockpile' && i.regular)")));
+    test('Shopping: household items are labelled Amazon, fresh ones Woolworths', () => ok(run("shopItem('Toilet paper').store") === 'Amazon' && run("shopItem('Chicken breast').store") === 'Woolworths'));
+    test('Meal book: built-in list has prep meals, dinners and bases', () => {
+        ok(run("getMealBook().meals.filter(m => m.type === 'Prep').length") >= 25, 'prep');
+        ok(run("getMealBook().meals.filter(m => m.type === 'Dinner').some(m => m.name === 'Nachos' && m.usually === 2)"), 'nachos is a 2-serve dinner');
+        ok(run("getMealBook().meals.find(m => m.name === 'Spanakopita').type") === 'Dinner', 'spanakopita is fresh');
+        eq(run("getMealBook().bases.length"), 4);
+    });
+    test('Meal book: every ingredient is a known item', () => ok(run("(b => [...b.meals, ...b.bases].every(m => m.ings.every(i => DEFAULT_SHOP_ITEMS.some(d => d.name === i[0]))))(getMealBook())")));
+
+    test('Quantities: units add up and read naturally', () => {
+        eq(run("formatQty({ g: 1550 })"), '1.55 kg');
+        eq(run("formatQty({ '': 1.5 })"), '1½');
+        eq(run("formatQty({ tsp: 2, tbsp: 1 })"), '1½ tbsp');
+        eq(run("formatQty({ tsp: 1.25 })"), '1¼ tsp');
+        eq(run("formatQty({ can: 2 })"), '2 cans');
+        eq(run("formatQty({}, true)"), 'some');
+        eq(run("formatQty({ '': 3, g: 2000 })"), '2 kg + 3 whole');
+    });
+
+    run("changeMealServes('chicken-madras', 1); changeMealServes('chicken-madras', 1); changeMealServes('keema-curry', 1)");
+    test('Prep meals: + adds a whole batch (the recipe\'s serves)', () => eq(run("getShopping().plan.meals['chicken-madras']"), 10));
+    test('Meal plan: adds up ingredients across meals and batches', () => {
+        eq(item('Chicken breast').qty, '1.5 kg', 'Madras 750 g x2');
+        eq(item('Beef mince').qty, '625 g', 'Keema');
+        eq(item('Limes').qty, '2', 'a lime per Madras');
+    });
+    test('Meal plan: says how much of each base is needed, from the freezer by default', () => {
+        const b = totals().bases.find(b => b.id === 'indian-curry-base-gravy');
+        ok(b.needed === 1500 && b.batches === 0, JSON.stringify(b));
+        ok(!item('Mild curry powder').meals.includes('Indian curry base gravy'), 'no gravy ingredients when using frozen');
+    });
+    run("changeBaseBatches('indian-curry-base-gravy', 1)");
+    test('Meal plan: making a base starts with enough for the week', () => eq(run("getShopping().plan.bases['indian-curry-base-gravy']"), 1));
+    test('Meal plan: making a base adds its ingredients', () => eq(item('Onions').qty, '2 kg + 1 whole'));
+
+    run("changeMealServes('nachos', 1)");
+    test('Dinners: start at the usual serves and scale the recipe down', () => {
+        eq(run("getShopping().plan.meals['nachos']"), 2);
+        eq(item('Corn chips').qty, '200 g', '500 g for 5 -> 200 g for 2');
+        const mince = totals().bases.find(b => b.id === 'mexican-spiced-beef-mince');
+        ok(Math.abs(mince.needed - 0.5) < 1e-9, '1¼ batches for 5 -> ½ for 2');
+    });
+    run("changeMealServes('nachos', 1)");
+    test('Dinners: + adds one serve', () => eq(run("getShopping().plan.meals['nachos']"), 3));
+    test('Meal plan: shows prep and dinners separately on the Shopping tab', () => {
+        const html = app.els.shoppingContainer.innerHTML;
+        ok(/Chicken Madras <b>×2<\/b>/.test(html) && /Nachos <b>3 serves<\/b>/.test(html) && /Fresh dinners/.test(html), html.slice(0, 200));
+    });
+
+    run("addMealIngredients('fresh')");
+    test('Meal plan: Add all puts the fresh ingredients on the list with quantities', () => {
+        const e = JSON.parse(run("JSON.stringify(getShopping().list.find(e => e.name === 'Chicken breast'))"));
+        ok(e && e.qty === '1.5 kg' && e.store === 'Woolworths' && e.section === 'Meat', JSON.stringify(e));
+        ok(!run("getShopping().list.some(e => e.name === 'Garam masala')"), 'stockpile not added');
+    });
+    run("toggleShoppingItem('Toilet paper')");
+    test('Stockpile: ticking adds to the Amazon list', () => ok(run("getShopping().list.find(e => e.name === 'Toilet paper').store") === 'Amazon'));
+    run("toggleShoppingItem('Toilet paper')");
+    test('...and unticking takes it off', () => ok(!run("getShopping().list.some(e => e.name === 'Toilet paper')")));
+    run("toggleShoppingItem('Chicken breast')");
+    test('Ticking something already on the list takes it off', () => ok(!run("getShopping().list.some(e => e.name === 'Chicken breast' && !e.done)")));
+    run("addToShoppingList('Chicken breast', '600 g'); addToShoppingList('Chicken breast', '300 g')");
+    test('Adding the same item twice combines the quantities', () => eq(run("getShopping().list.find(e => e.name === 'Chicken breast').qty"), '600 g + 300 g'));
+
+    run("setAisle('Meat', '12'); setAisle('Fruit & Veg', '1'); renderShopping()");
+    test('Shopping list: sorted by your aisle numbers, labelled with them', () => {
+        const html = app.els.shoppingContainer.innerHTML;
+        ok(html.indexOf('Aisle 1 · Fruit &amp; Veg') > -1 && html.indexOf('Aisle 1 · Fruit &amp; Veg') < html.indexOf('Aisle 12 · Meat'), html.slice(0, 300));
+    });
+    const id = run("getShopping().list.find(e => e.name === 'Chicken breast').id");
+    run(`tickShoppingEntry('${id}')`);
+    test('Ticking an item on the list moves it to the trolley', () => ok(run("getShopping().list.find(e => e.name === 'Chicken breast').done") && /In the trolley/.test(app.els.shoppingContainer.innerHTML)));
+    run("clearBoughtItems()");
+    test('Clear ticked removes bought items', () => ok(!run("getShopping().list.some(e => e.name === 'Chicken breast')")));
+
+    const gid = run("getShopping().items.find(i => i.name === 'Garam masala').id");
+    run(`updateShopItem('${gid}', 'store', 'Amazon'); toggleShoppingItem('Garam masala')`);
+    test('Changing where to buy an item is used for the list', () => eq(run("getShopping().list.find(e => e.name === 'Garam masala').store"), 'Amazon'));
+    run(`updateShopItem('${gid}', 'store', 'Woolworths')`);
+    test('...and moves it if it\'s already on the list', () => eq(run("getShopping().list.find(e => e.name === 'Garam masala').store"), 'Woolworths'));
+    run(`removeShopItem('${gid}')`);
+    test('Removing a meal ingredient from Stockpile keeps it known for the planner', () => ok(run("getShopping().items.find(i => i.name === 'Garam masala').regular === false")));
+
+    test('Shopping data carries into a new financial year', () => ok(run("JSON.stringify(buildNewYearData(appData, 2027).shopping) === JSON.stringify(appData.shopping)")));
+    run("clearMealPlan()");
+    test('New week clears the meal plan', () => ok(run("Object.keys(getShopping().plan.meals).length === 0 && Object.keys(getShopping().plan.bases).length === 0")));
+
+    // Older data from before the recipe book update
+    const old = makeApp('2026-11-15T09:00:00+10:00');
+    const raw = sampleData();
+    raw.shopping = { items: [{ name: 'Shredded cheese', kind: 'fresh', section: 'Dairy & Eggs', store: 'Woolworths', regular: true }], list: [{ name: 'Shredded cheese', qty: '150 g' }], plan: { meals: { madras: 2 }, bases: {} } };
+    old.load(raw);
+    test('Older data: renamed items follow, and the old-style plan is cleared', () => {
+        ok(old.run("getShopping().items[0].name === 'Grated cheese' && getShopping().list[0].name === 'Grated cheese'"), 'renamed');
+        ok(old.run("Object.keys(getShopping().plan.meals).length === 0"), 'plan cleared');
+    });
+}
+
+// Meals Excel: download -> edit -> upload round trip (real Excel library, no browser)
+const excelChecks = (async () => {
+    const Excel = require(path.join(__dirname, '..', 'js', 'vendor', 'exceljs.min.js'));
+    const app = makeApp('2026-11-15T09:00:00+10:00');
+    app.load(sampleData());
+    app.ctx.__Excel = Excel;
+    const buf = await app.run("buildMealsWorkbook(__Excel, getMealBook(), getShopping().items).xlsx.writeBuffer()");
+    // Edit like a person would: change nachos to 3 serves, a quantity, add a new meal with a new ingredient
+    const wb = new Excel.Workbook();
+    await wb.xlsx.load(buf);
+    const meals = wb.getWorksheet('Meals'), ings = wb.getWorksheet('Ingredients');
+    meals.eachRow((row, r) => { if (row.getCell(1).value === 'Nachos') row.getCell(5).value = 3; });
+    ings.eachRow(row => { if (row.getCell(1).value === 'Keema Curry' && row.getCell(2).value === 'Beef mince') { row.getCell(3).value = '1 1/2'; row.getCell(4).value = 'kg'; } });
+    meals.addRow(['Steak night', 'dinner', 'Comfort', 2, '', '', '', '', '']);
+    ings.addRow(['Steak night', 'Scotch fillet steaks', 2, '']);
+    ings.addRow(['Steak night', 'Butter', '½', 'TBSP']);
+    ings.addRow(['Nowhere meal', 'Salt', 1, 'tsp']);
+    const edited = await wb.xlsx.writeBuffer();
+    app.ctx.__buf = edited;
+    const result = await app.run("readMealsWorkbook(__Excel, __buf)");
+    app.ctx.__result = result;
+    test('Meals Excel: reads back every meal and base', () => {
+        ok(result.book.meals.length === app.run("getMealBook().meals.length") + 1 && result.book.bases.length === 4, `${result.book.meals.length} meals`);
+    });
+    test('Meals Excel: edits come through (serves, fractions, kg, new meal)', () => {
+        eq(result.book.meals.find(m => m.name === 'Nachos').usually, 3);
+        const beef = result.book.meals.find(m => m.name === 'Keema Curry').ings.find(i => i[0] === 'Beef mince');
+        ok(beef[1] === 1500 && beef[2] === 'g', JSON.stringify(beef));
+        const steak = result.book.meals.find(m => m.name === 'Steak night');
+        ok(steak.type === 'Dinner' && steak.usually === 2 && steak.ings.some(i => i[0] === 'Butter' && i[1] === 0.5 && i[2] === 'tbsp'), JSON.stringify(steak));
+        ok(result.book.meals.find(m => m.name === 'Burrito Bowls').bases[0][0] === 'Mexican spiced beef mince', 'bases kept');
+    });
+    test('Meals Excel: points out problems without failing', () => {
+        ok(result.problems.some(p => /Nowhere meal/.test(p)) && result.problems.some(p => /Scotch fillet steaks/.test(p)), result.problems.join(' | '));
+    });
+    app.run("applyMealsUpload(__result, false)");
+    test('Meals Excel: upload replaces the meal list and adds new items', () => {
+        ok(app.run("getMealBook().meals.some(m => m.name === 'Steak night') && !!getShopping().mealBook.updated"), 'saved');
+        ok(app.run("getShopping().items.some(i => i.name === 'Scotch fillet steaks' && i.kind === 'fresh')"), 'new item');
+        ok(/Your list, uploaded/.test(app.els.shoppingContainer.innerHTML), 'shown as your list');
+    });
+})();
+module.exports.pending = Promise.all([module.exports.pending, excelChecks]);
+
+// Excel backup of the financial data (real Excel library)
+const financeExcel = (async () => {
+    const Excel = require(path.join(__dirname, '..', 'js', 'vendor', 'exceljs.min.js'));
+    const app = makeApp('2026-11-15T09:00:00+10:00');
+    app.load(sampleData());
+    app.ctx.__Excel = Excel;
+    const buf = await app.run("buildFinanceWorkbook(__Excel, appData).xlsx.writeBuffer()");
+    const wb = new Excel.Workbook();
+    await wb.xlsx.load(buf);
+    const names = wb.worksheets.map(w => w.name);
+    test('Excel backup: has the main sheets', () => ok(['Summary', 'Income', 'Expenses', 'Budgets', 'Home Loan', 'Net Worth'].every(n => names.includes(n)), names.join(', ')));
+    test('Excel backup: expenses and pay match the app', () => {
+        const exp = wb.getWorksheet('Expenses');
+        eq(exp.rowCount - 1, app.run('appData.expenses.length'), 'one row per expense');
+        let pay = 0; wb.getWorksheet('Income').eachRow((row, r) => { if (r > 1) pay += row.getCell(6).value; });
+        near(pay, app.run('getTotalIncome()'), 0.01);
+    });
+    test('Excel backup: dates are the same calendar day as in the app', () => {
+        const first = app.run("appData.expenses.slice().sort((a, b) => a.date.localeCompare(b.date))[0].date");
+        const cell = wb.getWorksheet('Expenses').getRow(2).getCell(1).value;
+        eq(cell.toISOString().slice(0, 10), first);
+    });
+})();
+module.exports.pending = Promise.all([module.exports.pending, financeExcel]);
+
+// Excel backup -> Import round trip
+const backupRoundTrip = (async () => {
+    const Excel = require(path.join(__dirname, '..', 'js', 'vendor', 'exceljs.min.js'));
+    const app = makeApp('2026-11-15T09:00:00+10:00');
+    app.load(sampleData());
+    app.ctx.__Excel = Excel;
+    const before = app.run('serializeAppData()');
+    const buf = await app.run("buildFinanceWorkbook(__Excel, appData).xlsx.writeBuffer()");
+    app.ctx.__buf = buf;
+    const result = await app.run("readBackupWorkbook(__Excel, __buf)");
+    test('Excel backup: holds all the data exactly', () => {
+        app.ctx.__text = result.text;
+        eq(app.run("JSON.stringify(normalizeAppData(JSON.parse(__text)), null, 2)"), before);
+        eq(result.warnings.length, 0, 'no edits');
+    });
+    // Import it into a fresh account
+    const fresh = makeApp('2026-11-15T09:00:00+10:00');
+    const cloud = fakeCloud();
+    fresh.ctx.__cloud = cloud;
+    await fresh.run('cloudStore = __cloud; openStartYear()');
+    fresh.ctx.__files = [{ name: 'finance_data_2026-2027.xlsx', text: result.text }];
+    await fresh.run('importDataTexts(__files)');
+    test('Import: restores an Excel backup into its year', () => ok(cloud.years[2026] && fresh.run('appData.expenses.length') === app.run('appData.expenses.length') && fresh.run('appData.loan.offset') === app.run('appData.loan.offset')));
+    // Someone edits the Expenses sheet in Excel
+    const wb = new Excel.Workbook();
+    await wb.xlsx.load(buf);
+    wb.getWorksheet('Expenses').getRow(2).getCell(4).value = 99999;
+    app.ctx.__edited = await wb.xlsx.writeBuffer();
+    const edited = await app.run("readBackupWorkbook(__Excel, __edited)");
+    test('Import: notices edits made in Excel (which it doesn\'t use)', () => ok(edited.warnings.includes('the Expenses sheet'), JSON.stringify(edited.warnings)));
+    app.ctx.__meals = await app.run("buildMealsWorkbook(__Excel, getMealBook(), getShopping().items).xlsx.writeBuffer()");
+    let refused = '';
+    try { await app.run("readBackupWorkbook(__Excel, __meals)"); } catch (e) { refused = e.message; }
+    test('Import: a spreadsheet that isn\'t a backup is refused with a clear message', () => ok(/isn't a backup made by this app/.test(refused), refused));
+})();
+module.exports.pending = Promise.all([module.exports.pending, backupRoundTrip]);
 
 // Lists: dragging whole lists
 {

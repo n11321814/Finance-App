@@ -68,8 +68,16 @@ function makeFirestoreStore(uid) {
 // ================================================================
 
 function initCloud() {
-    if (!isFirebaseConfigured() || typeof firebase === 'undefined') {
-        showSignIn('Firebase isn\'t set up yet. See SETUP.md.');
+    if (typeof FIREBASE_CONFIG !== 'object') {
+        showSignIn('js/firebase-config.js didn\'t load. Check it\'s in the js folder.');
+        return;
+    }
+    if (!isFirebaseConfigured()) {
+        showSignIn('js/firebase-config.js still has the PASTE placeholders. If you\'ve just updated it, wait a few minutes and refresh.');
+        return;
+    }
+    if (typeof firebase === 'undefined') {
+        showSignIn('The Firebase files in js/vendor didn\'t load. Check that folder is uploaded.');
         return;
     }
     firebase.initializeApp(FIREBASE_CONFIG);
@@ -119,7 +127,7 @@ function showSignIn(message) {
     const msg = document.getElementById('signinMessage');
     if (msg) msg.textContent = message || '';
     const btn = document.getElementById('signinBtn');
-    if (btn) btn.style.display = isFirebaseConfigured() ? '' : 'none';
+    if (btn) btn.style.display = isFirebaseConfigured() && typeof firebase !== 'undefined' ? '' : 'none';
 }
 
 function hideSignIn() {
@@ -347,18 +355,45 @@ function warnBeforeLeaving(e) {
 // IMPORT & BACKUP
 // ================================================================
 
-// Pick one or more data files (e.g. this year and archived years).
+// Pick one or more backups (e.g. this year and archived years): Excel
+// backups from the Backup button, or older JSON data files.
 function importFiles() {
     if (!cloudStore) { setStatus('Sign in first', 'error'); return; }
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.json,application/json';
+    input.accept = '.xlsx,.json,application/json';
     input.multiple = true;
     input.onchange = async () => {
-        const texts = await Promise.all([...input.files].map(f => f.text().then(t => ({ name: f.name, text: t }))));
-        await importDataTexts(texts);
+        try {
+            const texts = await readBackupFiles([...input.files]);
+            if (texts) await importDataTexts(texts);
+        } catch (e) {
+            alert(e.message);
+        }
     };
     input.click();
+}
+
+// Files -> [{ name, text }] ready for importDataTexts, or null if cancelled
+async function readBackupFiles(files) {
+    const texts = [];
+    const edited = [];
+    for (const f of files) {
+        if (/\.xlsx$/i.test(f.name)) {
+            let result;
+            try {
+                result = await readBackupWorkbook(await loadExcelJS(), await f.arrayBuffer());
+            } catch (e) {
+                throw new Error(`Couldn't import "${f.name}": ${e.message}.`);
+            }
+            if (result.warnings.length) edited.push(`${f.name} (${result.warnings.join(' and ')})`);
+            texts.push({ name: f.name, text: result.text });
+        } else {
+            texts.push({ name: f.name, text: await f.text() });
+        }
+    }
+    if (edited.length && !confirm(`Changes made in Excel to ${edited.join(', ')} won't be imported. Import restores the data as it was when the backup was made.\n\nImport anyway?`)) return null;
+    return texts;
 }
 
 // texts: [{ name, text }]. Each file becomes the year it belongs to.
@@ -400,8 +435,13 @@ async function importDataTexts(texts) {
     }
 }
 
-// Downloads the year on screen as a JSON file (same format as before)
+// Backup: the year on screen as an Excel file (see backup-excel.js)
 function downloadBackup() {
+    return downloadBackupExcel();
+}
+
+// The year on screen as a JSON file (the older backup format)
+function downloadBackupJson() {
     const blob = new Blob([serializeAppData()], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

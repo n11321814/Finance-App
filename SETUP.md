@@ -33,7 +33,7 @@ In Firebase open **Authentication > Settings > Authorized domains**, click **Add
 2. Click **Import** (bottom of the sidebar, or the row under the tabs on a phone) and pick your OneDrive data file. You can select your archived year files at the same time. Each file goes into its own year.
 3. Check everything looks right. The year picker switches between years.
 
-From then on the app saves to your account automatically. **Backup** downloads the year on screen as a JSON file in the same format as before, so you can keep copies in OneDrive.
+From then on the app saves to your account automatically. **Backup** downloads the year on screen as an Excel file you can open and read, so you can keep copies in OneDrive. **Import** restores those Excel backups (and still accepts the older JSON files). Changes made to a backup in Excel aren't imported.
 
 ## Optional: lock the project to your account
 

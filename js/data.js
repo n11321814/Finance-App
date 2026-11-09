@@ -460,7 +460,8 @@ function buildNewYearData(old, newYear) {
         liabilities: copy(old.liabilities),
         renovation: copy(old.renovation),
         events: copy(old.events),
-        lists: copy(old.lists)
+        lists: copy(old.lists),
+        shopping: copy(old.shopping)
     };
 }
 
@@ -592,6 +593,8 @@ function normalizeAppData(rawData) {
             starred: it.starred || false
         }))
     }));
+
+    normalized.shopping = normalizeShopping(normalized.shopping);
 
     // Income: convert old format (hours1/hours2) to shifts if needed
     normalized.income = (normalized.income || []).map(week => {

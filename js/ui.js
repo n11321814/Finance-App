@@ -35,6 +35,7 @@ function updateUI() {
     try { renderCalendar(); } catch(e) { console.warn('renderCalendar failed:', e); }
     try { renderEventList(); } catch(e) { console.warn('renderEventList failed:', e); }
     try { renderLists(); } catch(e) { console.warn('renderLists failed:', e); }
+    try { renderShopping(); } catch(e) { console.warn('renderShopping failed:', e); }
     try { renderRateTracker(); } catch(e) { console.warn('renderRateTracker failed:', e); }
     try { renderInvestments(); } catch(e) { console.warn('renderInvestments failed:', e); }
     try { renderPlanning(); } catch(e) { console.warn('renderPlanning failed:', e); }

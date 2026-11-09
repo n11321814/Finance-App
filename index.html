@@ -49,16 +49,17 @@
             <button class="tab" data-tab="networth"><span class="tab-num">06</span>Net Worth</button>
             <button class="tab" data-tab="calendar"><span class="tab-num">07</span>Calendar</button>
             <button class="tab" data-tab="lists"><span class="tab-num">08</span>Lists</button>
-            <button class="tab" data-tab="rates"><span class="tab-num">09</span>Rates</button>
-            <button class="tab" data-tab="investments"><span class="tab-num">10</span>Investments</button>
-            <button class="tab" data-tab="planning"><span class="tab-num">11</span>Planning</button>
+            <button class="tab" data-tab="shopping"><span class="tab-num">09</span>Shopping</button>
+            <button class="tab" data-tab="rates"><span class="tab-num">10</span>Rates</button>
+            <button class="tab" data-tab="investments"><span class="tab-num">11</span>Investments</button>
+            <button class="tab" data-tab="planning"><span class="tab-num">12</span>Planning</button>
         </nav>
         <div class="footer">
             <span class="footer-label">YEAR</span>
             <select id="yearPicker" class="year-picker" onchange="switchYear(this.value)"></select>
             <div class="footer-actions">
-                <button class="btn btn-outline btn-sm" onclick="importFiles()" title="Load data files from your computer into your account">Import</button>
-                <button class="btn btn-outline btn-sm" onclick="downloadBackup()" title="Download this year as a JSON file">Backup</button>
+                <button class="btn btn-outline btn-sm" onclick="importFiles()" title="Restore backups (Excel, or older JSON files) into your account">Import</button>
+                <button class="btn btn-outline btn-sm" onclick="downloadBackup()" title="Download this year as an Excel file (Import restores it)">Backup</button>
             </div>
             <span class="path" id="signedInAs"></span>
             <button class="footer-link" onclick="signOut()">Sign out</button>
@@ -501,6 +502,11 @@
         <div id="rateTracker"></div>
     </div>
 
+    <!-- TAB: SHOPPING -->
+    <div class="tab-content" id="tab-shopping">
+        <div id="shoppingContainer"></div>
+    </div>
+
     <!-- TAB: LISTS -->
     <div class="tab-content" id="tab-lists">
         <div id="listsContainer" class="lists-container"></div>
@@ -530,6 +536,10 @@
 <script src="js/networth.js"></script>
 <script src="js/calendar.js"></script>
 <script src="js/lists.js"></script>
+<script src="js/shopping-data.js"></script>
+<script src="js/shopping.js"></script>
+<script src="js/meals-excel.js"></script>
+<script src="js/backup-excel.js"></script>
 <script src="js/weather-news.js"></script>
 <script src="js/rate-tracker.js"></script>
 <script src="js/investments.js"></script>

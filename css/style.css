@@ -1716,3 +1716,113 @@ body.privacy :is(
     /* Calendar: swipe across the week with the times kept in view */
     .calendar-time-col { position: sticky; left: 0; z-index: 2; background: var(--surface); }
 }
+
+/* ================================================================
+   SHOPPING
+   ================================================================ */
+.shop-grid { align-items: start; }
+.shop-section {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--c-cyan);
+    margin: 14px 0 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.shop-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 4px;
+    border-bottom: 1px solid var(--line);
+    min-height: 34px;
+}
+.shop-row.done .shop-name, .shop-row.done .shop-qty { text-decoration: line-through; opacity: 0.5; }
+.shop-row.on-list .shop-name { color: var(--text-muted); }
+.shop-name { flex: 1; min-width: 0; font-size: 13px; color: var(--text-primary); }
+.shop-qty { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.shop-tick, .shop-check {
+    width: 20px; height: 20px; flex-shrink: 0;
+    border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--c-cyan) 60%, transparent);
+    background: transparent; color: var(--bg);
+    font-size: 12px; line-height: 1; padding: 0; cursor: pointer;
+    display: grid; place-items: center;
+}
+.shop-check { border-radius: 5px; }
+.shop-row.done .shop-tick, .shop-check.on { background: var(--c-cyan); border-color: var(--c-cyan); }
+.shop-tick:hover, .shop-check:hover { background: color-mix(in srgb, var(--c-cyan) 25%, transparent); }
+.shop-store {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+    padding: 2px 7px; border-radius: 10px; white-space: nowrap;
+}
+.shop-store-amazon { background: color-mix(in srgb, var(--c-orange) 20%, transparent); color: var(--c-orange); }
+.shop-store-other { background: color-mix(in srgb, var(--c-purple) 20%, transparent); color: var(--c-purple); }
+.shop-mini-select { font-size: 11px; padding: 3px 6px; max-width: 120px; }
+.shop-edit-name { flex: 1; min-width: 0; }
+.shop-stores { display: flex; flex-wrap: wrap; gap: 6px; }
+.shop-store-tab {
+    background: transparent; border: 1px solid var(--line); color: var(--text-secondary);
+    border-radius: 16px; padding: 5px 12px; font-size: 12px; cursor: pointer;
+}
+.shop-store-tab span { color: var(--text-muted); margin-left: 4px; }
+.shop-store-tab.active { border-color: var(--c-cyan); color: var(--c-cyan); background: color-mix(in srgb, var(--c-cyan) 10%, transparent); }
+.shop-empty { font-size: 12px; color: var(--text-muted); padding: 12px 4px; }
+.shop-aisles { margin-top: 14px; font-size: 12px; color: var(--text-secondary); }
+.shop-aisles summary { cursor: pointer; color: var(--text-muted); }
+.shop-aisle-hint { font-size: 11px; color: var(--text-muted); margin: 4px 0 6px; }
+.shop-aisle-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 12px; }
+.shop-aisle-grid label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.shop-aisle-grid input { width: 52px; padding: 3px 6px; text-align: center; }
+.meal-cuisine { font-size: 11px; color: var(--text-muted); margin: 10px 0 4px; }
+.meal-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.meal-chip {
+    background: transparent; border: 1px solid var(--line); color: var(--text-secondary);
+    border-radius: 16px; padding: 5px 11px; font-size: 12px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+}
+.meal-chip:hover { border-color: var(--c-purple); color: var(--text-primary); }
+.meal-chip.on { border-color: var(--c-purple); background: color-mix(in srgb, var(--c-purple) 18%, transparent); color: var(--text-primary); cursor: default; padding: 3px 4px; }
+.meal-chip.on b { color: var(--c-purple); }
+.meal-chip.on button { background: none; border: none; color: var(--c-purple); font-size: 15px; width: 22px; cursor: pointer; padding: 0; }
+.meal-chip.small { font-size: 11px; padding: 3px 9px; }
+.base-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+.base-make { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--c-yellow); white-space: nowrap; }
+.base-make span { margin-right: 4px; }
+.base-ahead { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 11px; color: var(--text-muted); margin-top: 8px; }
+
+@media (max-width: 600px) {
+    .shop-row { gap: 8px; }
+    .shop-mini-select { max-width: 92px; }
+    .shop-row.editing { flex-wrap: wrap; }
+    .shop-row.editing .shop-edit-name { flex-basis: 100%; }
+}
+.shop-fold { width: 100%; background: none; border: none; border-bottom: 1px solid var(--line); padding: 8px 4px; margin: 0; cursor: pointer; text-align: left; }
+.shop-fold:hover { color: var(--text-primary); }
+.shop-fold-count { color: var(--text-muted); letter-spacing: 0.04em; }
+.shop-block { break-inside: avoid; }
+@media (min-width: 1200px) {
+    .shop-columns { column-count: 2; column-gap: 24px; }
+}
+.shop-move {
+    width: 30px; padding: 2px 0; text-align: center; text-align-last: center;
+    background: transparent; border: 1px solid transparent; border-radius: 6px;
+    color: var(--text-muted); font-size: 13px; cursor: pointer;
+    appearance: none; -webkit-appearance: none;
+}
+.shop-move:hover { border-color: var(--line); color: var(--c-cyan); }
+.shop-move option { color: initial; }
+@media (max-width: 600px) {
+    .base-row { flex-wrap: wrap; }
+    .base-make { margin-left: auto; }
+}
+.meal-chip.on.dinner { border-color: var(--c-orange); background: color-mix(in srgb, var(--c-orange) 16%, transparent); }
+.meal-chip.on.dinner b, .meal-chip.on.dinner button { color: var(--c-orange); }
+.meal-file { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 11px; color: var(--text-muted); }
+.meal-file span { flex: 1; min-width: 140px; }
+.base-row > div:first-child { flex: 1; min-width: 0; }
+.base-row .shop-qty { white-space: normal; }
