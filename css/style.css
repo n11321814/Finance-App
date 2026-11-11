@@ -1943,3 +1943,6 @@ button.shop-sec-head { cursor: pointer; }
     .shop-step-num { width: 24px; height: 24px; font-size: 12px; }
     .shop-step-badge { font-size: 11px; min-width: 18px; padding: 0 5px; }
 }
+/* Long "for: meal names" lines shorten instead of widening the page */
+.shop-grid > *, .shop-grid .card { min-width: 0; }
+#tab-shopping .shop-row { min-width: 0; }
