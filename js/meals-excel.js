@@ -19,7 +19,7 @@ function loadExcelJS() {
     return excelJsPromise;
 }
 
-const MEALS_HEAD = ['Meal', 'Type', 'Cuisine', 'Recipe serves', 'Usually make', 'Base', 'Base amount', 'Base 2', 'Base 2 amount'];
+const MEALS_HEAD = ['Meal', 'Type', 'Cuisine', 'Recipe serves', 'Usually make', 'Base', 'Base amount', 'Base 2', 'Base 2 amount', 'Makes (snacks)'];
 const INGS_HEAD = ['Meal or base', 'Ingredient', 'Qty', 'Unit'];
 const BASES_HEAD = ['Base', 'One batch makes', 'Unit', 'Note'];
 const ITEMS_HEAD = ['Item', 'Fresh or stockpile', 'Section', 'Store', 'On my list'];
@@ -27,7 +27,7 @@ const ITEMS_HEAD = ['Item', 'Fresh or stockpile', 'Section', 'Store', 'On my lis
 const HOW_TO = [
     'How to use this file',
     '',
-    'Meals: one row per meal. Type is Prep (batch cook and freeze) or Dinner (cooked fresh).',
+    'Meals: one row per meal. Type is Prep (batch cook and freeze), Dinner (cooked fresh) or Snack. For snacks, Recipe serves is how many pieces a batch makes (e.g. 12) and Makes describes it (e.g. 12 muffins).',
     'Recipe serves is how many serves the ingredient amounts make. Usually make is how many serves the app starts with when you pick a dinner.',
     'Base and Base amount: a base from the Bases sheet and how much of it the full recipe uses, in that base\'s unit (ml, cup or batch).',
     '',
@@ -75,10 +75,10 @@ function buildMealsWorkbook(Excel, book, items) {
     HOW_TO.forEach((t, i) => { const c = how.getCell(i + 1, 1); c.value = t; c.alignment = { wrapText: true }; if (i === 0) c.font = { bold: true, size: 14 }; });
 
     const meals = wb.addWorksheet('Meals');
-    head(meals, MEALS_HEAD, [40, 10, 14, 14, 14, 28, 13, 28, 13]);
+    head(meals, MEALS_HEAD, [40, 10, 14, 14, 14, 28, 13, 28, 13, 20]);
     book.meals.forEach(m => put(meals, [m.name, m.type, m.cuisine, m.serves, m.usually,
-        m.bases[0]?.[0] || '', m.bases[0]?.[1] ?? '', m.bases[1]?.[0] || '', m.bases[1]?.[1] ?? '']));
-    list(meals, 'B2:B500', 'Lists!$D$2:$D$3', true);
+        m.bases[0]?.[0] || '', m.bases[0]?.[1] ?? '', m.bases[1]?.[0] || '', m.bases[1]?.[1] ?? '', m.makes || '']));
+    list(meals, 'B2:B500', 'Lists!$D$2:$D$4', true);
     list(meals, 'F2:F500', 'Bases!$A$2:$A$100', false);
     list(meals, 'H2:H500', 'Bases!$A$2:$A$100', false);
 
@@ -111,7 +111,7 @@ function buildMealsWorkbook(Excel, book, items) {
 
     const lists = wb.addWorksheet('Lists', { state: 'hidden' });
     const stores = [...new Set([...SHOP_STORES, ...items.map(i => i.store)])];
-    const cols = [['Units', ...SHOP_UNITS.filter(Boolean), 'kg', 'L'], ['Sections', ...SHOP_SECTIONS], ['Stores', ...stores], ['Types', 'Prep', 'Dinner']];
+    const cols = [['Units', ...SHOP_UNITS.filter(Boolean), 'kg', 'L'], ['Sections', ...SHOP_SECTIONS], ['Stores', ...stores], ['Types', 'Prep', 'Dinner', 'Snack']];
     cols.forEach((col, c) => col.forEach((v, r) => { lists.getCell(r + 1, c + 1).value = v; }));
     return wb;
 }
@@ -175,8 +175,9 @@ async function readMealsWorkbook(Excel, buffer) {
         if (!['ml', 'cup', 'batch'].includes(u)) problems.push(`Bases row ${r}: unit "${unit}" should be ml, cup or batch`);
         return { name: cellText(vals[0]), per: parseQty(vals[1]) || 1, unit: ['ml', 'cup', 'batch'].includes(u) ? u : 'batch', note: cellText(vals[3]), ings: [] };
     }).filter(b => b.name);
-    const meals = rows(sheet('Meals'), 9).map(({ r, vals }) => {
-        const type = cellText(vals[1]).toLowerCase().startsWith('d') ? 'Dinner' : 'Prep';
+    const meals = rows(sheet('Meals'), 10).map(({ r, vals }) => {
+        const t = cellText(vals[1]).toLowerCase();
+        const type = t.startsWith('d') ? 'Dinner' : t.startsWith('s') ? 'Snack' : 'Prep';
         const serves = parseQty(vals[3]);
         if (!(serves > 0)) problems.push(`Meals row ${r} (${cellText(vals[0])}): Recipe serves is missing, using 1`);
         const usually = parseQty(vals[4]);
@@ -188,7 +189,7 @@ async function readMealsWorkbook(Excel, buffer) {
             return [bases.find(b => sameName(b.name, name))?.name || name, amount > 0 ? amount : 0];
         });
         return { name: cellText(vals[0]), type, cuisine: cellText(vals[2]) || 'Other', serves: serves > 0 ? serves : 1,
-            usually: usually > 0 ? usually : (serves > 0 ? serves : 1), bases: mealBases, ings: [] };
+            usually: usually > 0 ? usually : (serves > 0 ? serves : 1), bases: mealBases, ings: [], makes: cellText(vals[9]) };
     }).filter(m => m.name);
     const names = new Set();
     meals.forEach(m => { if (names.has(m.name.toLowerCase())) problems.push(`"${m.name}" is on the Meals sheet twice`); names.add(m.name.toLowerCase()); });

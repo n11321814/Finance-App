@@ -11,6 +11,8 @@
 
 // The backend. Tests swap this for a fake with the same methods.
 let cloudStore = null;
+let memberMode = false;            // signed in as someone shopping is shared with (no finances)
+let legacyShopping = null;         // shopping data found in an older year file
 let signedInUser = null;           // { uid, email, name } once signed in
 let currentYear = null;            // FY start year on screen
 let lastKnownRev = 0;              // the year document's rev when we last read or wrote it
@@ -22,8 +24,9 @@ function isFirebaseConfigured() {
     return typeof FIREBASE_CONFIG === 'object' && FIREBASE_CONFIG.apiKey && !/PASTE/.test(FIREBASE_CONFIG.apiKey);
 }
 
-function makeFirestoreStore(uid) {
+function makeFirestoreStore(uid, name = '') {
     const db = firebase.firestore();
+    const sharedRef = owner => db.collection('shared').doc(owner);
     const userRef = db.collection('users').doc(uid);
     const yearRef = year => userRef.collection('years').doc(String(year));
     return {
@@ -45,6 +48,45 @@ function makeFirestoreStore(uid) {
         async getYearRev(year) {
             const snap = await yearRef(year).get();
             return snap.exists ? (snap.data().rev || 0) : 0;
+        },
+        // Shared shopping (see shared-shopping.js)
+        async getShared(owner) {
+            const snap = await sharedRef(owner).get();
+            if (!snap.exists) return null;
+            const d = snap.data();
+            return { json: d.json, rev: d.rev || 0, members: d.members || [] };
+        },
+        putShared(owner, json, expectRev, force, meta = {}) {
+            const ref = sharedRef(owner);
+            return db.runTransaction(async tx => {
+                const snap = await tx.get(ref);
+                const rev = snap.exists ? (snap.data().rev || 0) : 0;
+                if (!force && rev !== expectRev) return { conflict: true, rev };
+                const stamp = firebase.firestore.FieldValue.serverTimestamp();
+                if (snap.exists) tx.update(ref, { json, rev: rev + 1, updatedAt: stamp });
+                else tx.set(ref, { owner, ownerName: meta.ownerName || name, members: [], json, rev: rev + 1, updatedAt: stamp });
+                return { ok: true, rev: rev + 1 };
+            });
+        },
+        watchShared(owner, callback) {
+            return sharedRef(owner).onSnapshot(snap => {
+                if (!snap.exists || snap.metadata.hasPendingWrites) return;
+                const d = snap.data();
+                callback({ json: d.json, rev: d.rev || 0, members: d.members || [] });
+            }, e => console.warn('Shopping updates stopped:', e));
+        },
+        async getMembership(email) {
+            if (!email) return null;
+            const snap = await db.collection('members').doc(email.toLowerCase()).get();
+            return snap.exists ? snap.data() : null;
+        },
+        async setShoppingMembers(members, { add, remove } = {}) {
+            const batch = db.batch();
+            batch.update(sharedRef(uid), { members });
+            if (add) batch.set(db.collection('members').doc(add), { owner: uid, ownerName: name });
+            if (remove) batch.delete(db.collection('members').doc(remove));
+            await batch.commit();
+            return members;
         },
         // Writes only if the stored rev is still expectRev (unless force)
         putYear(year, json, expectRev, force, meta = {}) {
@@ -89,9 +131,13 @@ function initCloud() {
             return;
         }
         signedInUser = { uid: user.uid, email: user.email, name: user.displayName };
-        cloudStore = makeFirestoreStore(user.uid);
+        cloudStore = makeFirestoreStore(user.uid, user.displayName || user.email);
         hideSignIn();
-        await openStartYear();
+        // Someone has shared their shopping with this account: shopping only
+        let share = null;
+        try { share = await cloudStore.getMembership(user.email); } catch (e) { console.warn('Sharing check failed:', e); }
+        if (share) await enterMemberMode(share);
+        else await openStartYear();
     });
 }
 
@@ -110,10 +156,15 @@ async function signIn() {
 }
 
 async function signOut() {
-    if (hasUnsavedChanges() && !(await saveData())) {
+    if (shoppingHasUnsaved()) await saveSharedShopping();
+    if (!memberMode && hasUnsavedChanges() && !(await saveData())) {
         if (!confirm('Your latest changes aren\'t saved. Sign out anyway and lose them?')) return;
     }
     markClean();
+    stopSharedShopping();
+    shoppingState = null;
+    memberMode = false;
+    document.body?.classList.remove('member-mode');
     await firebase.auth().signOut();
     appData = normalizeAppData(DEFAULT_DATA);
     markCleanAfterRender = true;
@@ -148,6 +199,12 @@ async function openStartYear() {
         const user = await cloudStore.getUser();
         const year = user?.currentYear ?? getCurrentFinancialYear().start.getFullYear();
         const found = await openYear(year);
+        try {
+            await startSharedShopping(signedInUser?.uid || 'me', { ownerName: signedInUser?.name || signedInUser?.email || '', legacyShopping });
+        } catch (e) {
+            console.warn('Shopping load failed:', e);
+            setStatus('Couldn\'t load Shopping: ' + e.message, 'error');
+        }
         if (!found) setStatus('No data yet - Import your file, or just start entering', '');
     } catch (e) {
         console.error('Load failed:', e);
@@ -159,6 +216,8 @@ async function openStartYear() {
 async function openYear(year) {
     const doc = await cloudStore.getYear(year);
     appData = normalizeAppData(doc ? JSON.parse(doc.json) : { ...DEFAULT_DATA, financialYear: year });
+    // Older files carried Shopping; it now lives in the shared document
+    if (appData.shopping) { legacyShopping = legacyShopping || appData.shopping; delete appData.shopping; }
     currentYear = year;
     lastKnownRev = doc ? doc.rev : 0;
     markCleanAfterRender = true;
@@ -171,7 +230,7 @@ async function openYear(year) {
 // The year dropdown: every saved year, plus the one on screen
 async function renderYearPicker() {
     const select = document.getElementById('yearPicker');
-    if (!select || !cloudStore) return;
+    if (!select || !cloudStore || memberMode) return;
     let years = [];
     try { years = await cloudStore.listYears(); } catch (e) { console.warn('Could not list years:', e); }
     if (!years.some(y => y.year === currentYear)) years.push({ year: currentYear, closedOn: null });
@@ -229,6 +288,7 @@ async function writeCurrentYear(force = false) {
 
 // Returns true once the data is safely saved, false if not
 async function saveData() {
+    if (memberMode) { await saveSharedShopping(); return true; }
     if (!cloudStore) { setStatus('Sign in to save', 'error'); return false; }
     try {
         let result = await writeCurrentYear();
@@ -307,7 +367,7 @@ function scheduleAutosave() {
 }
 
 async function autosave() {
-    if (autosaveRunning || !cloudStore || !hasUnsavedChanges()) return;
+    if (autosaveRunning || !cloudStore || memberMode || !hasUnsavedChanges()) return;
     autosaveRunning = true;
     try {
         if (await writeCurrentYear() === 'conflict') {
@@ -327,7 +387,7 @@ async function autosave() {
 // If you have unsaved edits here, nothing is replaced; you're told instead.
 let remoteCheckRunning = false;
 async function checkForRemoteChanges() {
-    if (!cloudStore || currentYear === null || remoteCheckRunning || autosaveRunning) return;
+    if (!cloudStore || memberMode || currentYear === null || remoteCheckRunning || autosaveRunning) return;
     remoteCheckRunning = true;
     try {
         const rev = await cloudStore.getYearRev(currentYear);
@@ -346,9 +406,27 @@ async function checkForRemoteChanges() {
 }
 
 function warnBeforeLeaving(e) {
-    if (!hasUnsavedChanges()) return;
+    if (!(memberMode ? false : hasUnsavedChanges()) && !shoppingHasUnsaved()) return;
     e.preventDefault();
     e.returnValue = '';
+}
+
+// Signed in as someone the owner shared Shopping with: only the
+// Shopping tab, from the owner's shared document. No finances.
+async function enterMemberMode(share) {
+    memberMode = true;
+    document.body?.classList.add('member-mode');
+    appData = normalizeAppData(DEFAULT_DATA);
+    markCleanAfterRender = true;
+    try {
+        await startSharedShopping(share.owner, { member: true, ownerName: share.ownerName || '' });
+        setStatus(`Shopping shared by ${share.ownerName || 'the owner'}`, '');
+    } catch (e) {
+        console.error('Shared shopping failed:', e);
+        setStatus('Couldn\'t open the shared shopping: ' + e.message, 'error');
+    }
+    document.querySelector?.('.tab[data-tab="shopping"]')?.click();
+    updateUI();
 }
 
 // ================================================================

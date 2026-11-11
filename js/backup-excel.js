@@ -130,7 +130,8 @@ function buildFinanceWorkbook(Excel, data) {
 
     // Everything, exactly, for Import (hidden so it isn't edited by accident)
     const raw = wb.addWorksheet('Data', { state: 'veryHidden' });
-    const json = JSON.stringify(data);
+    // Includes the Shopping tab (stored separately, so it can be shared)
+    const json = JSON.stringify(typeof getShopping === 'function' ? { ...data, shopping: getShopping() } : data);
     raw.getCell(1, 1).value = BACKUP_MARK;
     for (let i = 0, r = 2; i < json.length; i += BACKUP_CHUNK, r++) raw.getCell(r, 1).value = json.slice(i, i + BACKUP_CHUNK);
     return wb;

@@ -31,7 +31,8 @@ function normalizeMealBook(book) {
             ings: (b.ings || []).filter(i => i && i[0]).map(ing)
         })),
         meals: book.meals.filter(m => m && m.name).map(m => ({
-            name: String(m.name), type: m.type === 'Dinner' ? 'Dinner' : 'Prep', cuisine: String(m.cuisine || 'Other'),
+            name: String(m.name), type: ['Dinner', 'Snack'].includes(m.type) ? m.type : 'Prep', cuisine: String(m.cuisine || 'Other'),
+            makes: String(m.makes || ''),
             serves: Number(m.serves) || 1, usually: Number(m.usually) || Number(m.serves) || 1,
             bases: (m.bases || []).filter(b => b && b[0]).map(b => [String(b[0]), Number(b[1]) || 0]),
             ings: (m.ings || []).filter(i => i && i[0]).map(ing)
@@ -59,14 +60,21 @@ function normalizeShopping(s) {
             id: e.id || genId(), name: rename(String(e.name)), qty: e.qty || '',
             store: e.store || 'Woolworths', section: SHOP_SECTIONS.includes(e.section) ? e.section : 'Other', done: !!e.done
         })),
-        plan: { v: 2, meals: { ...(plan.meals || {}) }, bases: { ...(plan.bases || {}) } },
+        plan: { v: 2, started: plan.started || null, meals: { ...(plan.meals || {}) }, bases: { ...(plan.bases || {}) } },
+        // Previous weeks: { id, date, meals: [{ name, type, serves }] }, newest first
+        history: (s.history || []).filter(h => h && Array.isArray(h.meals)).map(h => ({
+            id: h.id || genId(), date: h.date || null,
+            meals: h.meals.filter(m => m && m.name).map(m => ({ name: String(m.name), type: m.type || 'Prep', serves: Number(m.serves) || 1 }))
+        })).slice(0, 30),
         mealBook: normalizeMealBook(s.mealBook)
     };
 }
 
+// The Shopping tab's data: the shared document once signed in (see
+// shared-shopping.js), otherwise whatever came with the year's data
 function getShopping() {
-    if (!appData.shopping || !Array.isArray(appData.shopping.items)) appData.shopping = normalizeShopping(appData.shopping);
-    return appData.shopping;
+    if (!shoppingState) shoppingState = normalizeShopping(appData.shopping);
+    return shoppingState;
 }
 
 // Your uploaded meal list, or the built-in one; with ids for the planner
@@ -300,9 +308,12 @@ function changeMealServes(mealId, direction) {
     if (!meal) return;
     const current = Number(plan.meals[mealId]) || 0;
     let n;
-    if (!current && direction > 0) n = meal.type === 'Prep' ? meal.serves : meal.usually;
-    else n = current + direction * (meal.type === 'Prep' ? meal.serves : 1);
+    // Prep meals and snacks go by the batch, dinners by the serve
+    const byBatch = meal.type !== 'Dinner';
+    if (!current && direction > 0) n = byBatch ? meal.serves : meal.usually;
+    else n = current + direction * (byBatch ? meal.serves : 1);
     if (n > 0) plan.meals[mealId] = n; else delete plan.meals[mealId];
+    if (!plan.started && Object.keys(plan.meals).length) plan.started = toLocalISODate();
     updateUI();
 }
 
@@ -319,8 +330,38 @@ function changeBaseBatches(baseId, delta) {
     updateUI();
 }
 
+// New week: this week's meals go into Previous weeks, and the plan clears
 function clearMealPlan() {
-    getShopping().plan = { v: 2, meals: {}, bases: {} };
+    const s = getShopping();
+    const book = getMealBook();
+    const meals = book.meals.filter(m => s.plan.meals[m.id] > 0).map(m => ({ name: m.name, type: m.type, serves: s.plan.meals[m.id] }));
+    if (meals.length) s.history.unshift({ id: genId(), date: s.plan.started || toLocalISODate(), meals });
+    s.history = s.history.slice(0, 30);
+    s.plan = { v: 2, started: null, meals: {}, bases: {} };
+    shopStep = 1;
+    updateUI();
+}
+
+// Adds a previous week's meals to this week's plan
+function planWeekAgain(id) {
+    const s = getShopping();
+    const week = s.history.find(h => h.id === id);
+    if (!week) return;
+    const book = getMealBook();
+    let missing = 0;
+    for (const m of week.meals) {
+        const meal = book.meals.find(x => sameName(x.name, m.name));
+        if (meal) s.plan.meals[meal.id] = (Number(s.plan.meals[meal.id]) || 0) + m.serves; else missing++;
+    }
+    if (!s.plan.started) s.plan.started = toLocalISODate();
+    shopStep = 1;
+    updateUI();
+    if (missing) alert(`${missing} of those meals ${missing === 1 ? 'isn\'t' : 'aren\'t'} in your meal list any more, so ${missing === 1 ? 'it was' : 'they were'} skipped.`);
+}
+
+function deleteWeek(id) {
+    const s = getShopping();
+    s.history = s.history.filter(h => h.id !== id);
     updateUI();
 }
 
@@ -330,7 +371,6 @@ function clearMealPlan() {
 
 let shopEditing = { fresh: false, stockpile: false };
 let shopListStore = 'Woolworths';
-let shopPlanOpen = true;
 const shopOpenSections = new Set();   // "kind:section" folded open this session
 
 function toggleShopEdit(kind) {
@@ -406,14 +446,32 @@ function toggleShopSection(key) {
     renderShopping();
 }
 
-function toggleShopPlan() {
-    shopPlanOpen = !shopPlanOpen;
-    renderShopping();
-}
+// ================================================================
+// RENDER - a step-by-step page: 1 Meals, 2 Bases, 3 Ingredients,
+// 4 Regulars, 5 Shop; then Previous weeks and Sharing.
+// ================================================================
 
-// ================================================================
-// RENDER
-// ================================================================
+let shopStep = 1;
+const SHOP_STEPS = [
+    { n: 1, key: 'meals', title: 'Meals', hint: 'Pick this week\'s meal prep, dinners and snacks', colour: 'var(--c-purple)' },
+    { n: 2, key: 'bases', title: 'Bases', hint: 'From the freezer, or make a batch', colour: 'var(--c-yellow)' },
+    { n: 3, key: 'ingredients', title: 'Ingredients', hint: 'Tick what you need to buy', colour: 'var(--c-orange)' },
+    { n: 4, key: 'regulars', title: 'Regulars', hint: 'Fresh basics and anything running low', colour: 'var(--stat-disposable)' },
+    { n: 5, key: 'shop', title: 'Shop', hint: 'Your list, in aisle order', colour: 'var(--c-cyan)' }
+];
+const TYPE_COLOUR = { Prep: 'var(--c-purple)', Dinner: 'var(--c-orange)', Snack: 'var(--c-yellow)' };
+const SECTION_COLOUR = {
+    'Fruit & Veg': 'var(--stat-disposable)', 'Bakery': 'var(--c-yellow)', 'Deli': 'var(--c-orange)', 'Meat': 'var(--c-orange)',
+    'Dairy & Eggs': 'var(--c-cyan)', 'Freezer': 'var(--c-blue)', 'Herbs & Spices': 'var(--c-yellow)', 'International': 'var(--c-purple)',
+    'Cleaning & Laundry': 'var(--c-blue)', 'Paper & Wraps': 'var(--c-blue)', 'Liquor': 'var(--c-purple)'
+};
+const sectionColour = sec => SECTION_COLOUR[sec] || 'var(--c-purple)';
+
+function goShopStep(n) {
+    shopStep = Math.min(5, Math.max(1, n));
+    renderShopping();
+    document.getElementById('shoppingContainer')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+}
 
 function storeOptions(current) {
     return shopStores().map(st => `<option value="${escapeHtml(st)}" ${st === current ? 'selected' : ''}>${escapeHtml(st)}</option>`).join('') +
@@ -425,23 +483,149 @@ function storeBadge(store) {
     return `<span class="shop-store shop-store-${store === 'Amazon' ? 'amazon' : 'other'}">${escapeHtml(store)}</span>`;
 }
 
-const jsArg = str => escapeHtml(JSON.stringify(str));   // safe inside onclick="..."
+const jsArg = str => JSON.stringify(str).replace(/'/g, '&#39;');   // for onclick='fn(${jsArg(x)})'
+
+function sectionHead(section, label = escapeHtml(section), extra = '') {
+    return `<div class="shop-sec-head" style="--sec:${sectionColour(section)}"><span>${label}</span>${extra}</div>`;
+}
 
 function renderShopping() {
     const el = document.getElementById('shoppingContainer');
     if (!el) return;
     const s = getShopping();
+    const book = getMealBook();
+    const totals = mealPlanTotals(s.plan, book);
+    const chosen = book.meals.filter(m => s.plan.meals[m.id] > 0);
+    const basesInPlay = totals.bases.filter(b => b.needed > 0 || b.batches > 0);
+    const toBuy = totals.items.filter(i => i.kind === 'fresh' && !listEntry(i.name)).length;
+    const onListRegular = s.items.filter(i => i.regular && listEntry(i.name)).length;
+    const open = s.list.filter(e => !e.done).length;
+    const badges = { meals: chosen.length, bases: basesInPlay.length, ingredients: toBuy, regulars: onListRegular, shop: open };
+    const step = SHOP_STEPS[shopStep - 1];
+    let body = '';
+    if (shopStep === 1) body = renderMealsStep(s, book);
+    if (shopStep === 2) body = renderBasesStep(totals);
+    if (shopStep === 3) body = renderIngredientsStep(totals);
+    if (shopStep === 4) body = `<div class="grid-2 shop-grid"><div>${renderShopRegulars(s, 'fresh')}</div><div>${renderShopRegulars(s, 'stockpile')}</div></div>`;
+    if (shopStep === 5) body = renderShopList(s);
+    const prev = SHOP_STEPS[shopStep - 2], next = SHOP_STEPS[shopStep];
     el.innerHTML = `
-        <div class="grid-2 shop-grid">
-            <div>${renderShopList(s)}</div>
-            <div>${renderMealPlanner(s)}</div>
+        <div class="shop-steps">
+            ${SHOP_STEPS.map(st => `
+                <button class="shop-step ${st.n === shopStep ? 'active' : ''} ${st.n < shopStep ? 'past' : ''}" style="--step:${st.colour}" onclick="goShopStep(${st.n})">
+                    <span class="shop-step-num">${st.n}</span>
+                    <span class="shop-step-title">${st.title}</span>
+                    ${badges[st.key] ? `<span class="shop-step-badge">${badges[st.key]}</span>` : ''}
+                </button>`).join('')}
         </div>
-        <div class="grid-2 shop-grid">
-            <div>${renderShopRegulars(s, 'fresh')}</div>
-            <div>${renderShopRegulars(s, 'stockpile')}</div>
+        <div class="shop-step-intro" style="--step:${step.colour}">
+            <div><div class="shop-step-heading">${step.n}. ${step.title}</div><div class="shop-step-hint">${step.hint}</div></div>
+            ${shopStep === 1 && (chosen.length || Object.keys(s.plan.bases).length) ? `<button class="btn btn-outline btn-sm" onclick="clearMealPlan()" title="Move this week's meals to Previous weeks and start again">New week</button>` : ''}
+        </div>
+        ${body}
+        <div class="shop-step-nav">
+            ${prev ? `<button class="btn btn-outline" onclick="goShopStep(${prev.n})">← ${prev.title}</button>` : '<span></span>'}
+            ${next ? `<button class="btn btn-primary shop-next" style="--step:${next.colour}" onclick="goShopStep(${next.n})">Next: ${next.title} →</button>` : ''}
+        </div>
+        ${renderHistory(s, book)}
+        ${typeof renderSharingCard === 'function' ? renderSharingCard() : ''}`;
+}
+
+// Step 1: meal chips, grouped by type then cuisine
+function renderMealsStep(s, book) {
+    const plan = s.plan;
+    const chip = m => {
+        const n = Number(plan.meals[m.id]) || 0;
+        if (!n) return `<button class="meal-chip" onclick="changeMealServes('${m.id}', 1)">${escapeHtml(m.name)}</button>`;
+        const label = m.type === 'Dinner' ? ` <b>${n} serve${n === 1 ? '' : 's'}</b>`
+            : (n / m.serves !== 1 ? ` <b>×${niceNumber(n / m.serves)}</b>` : '');
+        return `<span class="meal-chip on">
+            <button onclick="changeMealServes('${m.id}', -1)" title="Less">−</button>
+            ${escapeHtml(m.name)}${label}
+            <button onclick="changeMealServes('${m.id}', 1)" title="More">+</button></span>`;
+    };
+    const group = (type, title, note) => {
+        const meals = book.meals.filter(m => m.type === type);
+        if (!meals.length) return '';
+        const count = meals.filter(m => plan.meals[m.id] > 0).length;
+        const cuisines = [...new Set(meals.map(m => m.cuisine))];
+        return `
+            <div class="card meal-group" style="--type:${TYPE_COLOUR[type]}">
+                <div class="meal-group-head"><span class="meal-group-title">${title}</span><span class="meal-group-note">${count ? `${count} chosen` : note}</span></div>
+                ${cuisines.map(c => `
+                    ${type === 'Snack' ? '' : `<div class="meal-cuisine">${escapeHtml(c)}</div>`}
+                    <div class="meal-chips">${meals.filter(m => m.cuisine === c).map(chip).join('')}</div>`).join('')}
+            </div>`;
+    };
+    const updated = s.mealBook?.updated ? `Your list, uploaded ${new Date(s.mealBook.updated).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}` : 'Built-in list';
+    return `
+        ${group('Prep', 'Meal prep', '+ adds a batch of 5')}
+        ${group('Dinner', 'Fresh dinners', '+ adds a serve')}
+        ${group('Snack', 'Snacks', '+ adds a batch')}
+        <div class="meal-file">
+            <span>${updated} · ${book.meals.length} meals</span>
+            <button class="btn btn-outline btn-sm" onclick="downloadMealsExcel()">Download Excel</button>
+            <button class="btn btn-outline btn-sm" onclick="uploadMealsExcel()">Upload Excel</button>
         </div>`;
 }
 
+// Step 2: bases needed, from the freezer or made fresh
+function renderBasesStep(totals) {
+    const baseUnit = (b, n) => b.unit === 'batch' ? (n === 1 ? 'batch' : 'batches') : b.unit === 'cup' ? (n === 1 ? 'cup' : 'cups') : b.unit;
+    const rows = totals.bases.filter(b => b.needed > 0 || b.batches > 0).map(b => {
+        const amount = b.unit === 'ml' ? Math.round(b.needed / 10) * 10 : Math.round(b.needed * 4) / 4;
+        const need = b.needed > 0
+            ? `Need ${b.unit === 'ml' ? amount : niceNumber(amount)} ${baseUnit(b, amount)}${b.unit !== 'batch' ? ` (${niceNumber(Math.max(0.25, Math.round(b.needed / b.per * 4) / 4))} batch)` : ''}`
+            : 'Making ahead';
+        return `
+            <div class="base-row ${b.batches ? 'making' : ''}">
+                <div><div class="shop-name">${escapeHtml(b.name)}</div><div class="shop-qty">${need}${b.note ? ` · ${escapeHtml(b.note)}` : ''}</div></div>
+                <div class="base-make">
+                    <span class="base-state">${b.batches ? `Make ${niceNumber(b.batches)}` : 'From freezer'}</span>
+                    <button class="list-icon-btn" onclick="changeBaseBatches('${b.id}', -0.5)" ${b.batches ? '' : 'disabled'}>−</button>
+                    <button class="list-icon-btn" onclick="changeBaseBatches('${b.id}', 0.5)">+</button>
+                </div>
+            </div>`;
+    }).join('');
+    const others = totals.bases.filter(b => !(b.needed > 0 || b.batches > 0));
+    return `
+        <div class="card">
+            ${rows || '<div class="shop-empty">None of this week\'s meals use a base.</div>'}
+            ${others.length ? `<div class="base-ahead"><span>Make ahead:</span> ${others.map(b => `<button class="meal-chip small" onclick="changeBaseBatches('${b.id}', 1)">+ ${escapeHtml(b.name)}</button>`).join('')}</div>` : ''}
+        </div>`;
+}
+
+// Step 3: everything the plan needs, ticked onto the list
+function renderIngredientsStep(totals) {
+    const row = i => {
+        const on = !!listEntry(i.name);
+        return `
+            <div class="shop-row ${on ? 'on-list' : ''}">
+                <button class="shop-check ${on ? 'on' : ''}" onclick='toggleShoppingItem(${jsArg(i.name)}, ${jsArg(i.qty === 'some' ? '' : i.qty)})' title="${on ? 'On the list' : 'Add to list'}">${on ? '✓' : ''}</button>
+                <div class="shop-main"><span class="shop-name">${escapeHtml(i.name)}</span><span class="shop-for">${escapeHtml(i.meals.join(', '))}</span></div>
+                <span class="shop-qty">${escapeHtml(i.qty)}</span>
+                ${storeBadge(i.store)}
+            </div>`;
+    };
+    const fresh = totals.items.filter(i => i.kind === 'fresh');
+    const stock = totals.items.filter(i => i.kind === 'stockpile');
+    if (!fresh.length && !stock.length) return `<div class="card"><div class="shop-empty">Pick some meals in step 1 and their ingredients show here.</div></div>`;
+    return `
+        <div class="grid-2 shop-grid">
+            <div class="card">
+                <div class="card-header"><div class="card-title">To buy <span class="shop-sub">fresh</span></div>
+                    ${fresh.length ? `<button class="btn btn-outline btn-sm" onclick="addMealIngredients('fresh')">Add all</button>` : ''}</div>
+                ${fresh.map(row).join('') || '<div class="shop-empty">Nothing fresh needed.</div>'}
+            </div>
+            <div class="card">
+                <div class="card-header"><div class="card-title">Check you have <span class="shop-sub">stockpile</span></div>
+                    ${stock.length ? `<button class="btn btn-outline btn-sm" onclick="addMealIngredients('stockpile')">Add all</button>` : ''}</div>
+                ${stock.map(row).join('') || '<div class="shop-empty">No pantry items needed.</div>'}
+            </div>
+        </div>`;
+}
+
+// Step 5: the list for one store, in aisle order
 function renderShopList(s) {
     const stores = shopStores().filter(st => st === 'Woolworths' || s.list.some(e => e.store === st));
     if (!stores.includes(shopListStore)) shopListStore = 'Woolworths';
@@ -451,10 +635,10 @@ function renderShopList(s) {
     const done = entries.filter(e => e.done);
     let lastSection = null;
     const rows = open.map(e => {
-        const head = e.section !== lastSection ? `<div class="shop-section">${sectionLabel(e.section)}</div>` : '';
+        const head = e.section !== lastSection ? sectionHead(e.section, sectionLabel(e.section)) : '';
         lastSection = e.section;
         return head + `
-            <div class="shop-row">
+            <div class="shop-row big">
                 <button class="shop-tick" onclick="tickShoppingEntry('${e.id}')" title="Got it"></button>
                 <span class="shop-name">${escapeHtml(e.name)}</span>
                 <span class="shop-qty">${escapeHtml(e.qty || '')}</span>
@@ -464,7 +648,7 @@ function renderShopList(s) {
             </div>`;
     }).join('');
     const doneRows = done.map(e => `
-            <div class="shop-row done">
+            <div class="shop-row big done">
                 <button class="shop-tick" onclick="tickShoppingEntry('${e.id}')" title="Not got yet">✓</button>
                 <span class="shop-name">${escapeHtml(e.name)}</span>
                 <span class="shop-qty">${escapeHtml(e.qty || '')}</span>
@@ -472,130 +656,34 @@ function renderShopList(s) {
     const aisleSections = [...new Set(s.list.filter(e => e.store === 'Woolworths').map(e => e.section).concat(SHOP_SECTIONS))];
     return `
         <div class="card">
-            <div class="card-header">
-                <div class="card-title">Shopping List</div>
-                ${done.length ? `<button class="btn btn-outline btn-sm" onclick="clearBoughtItems()">Clear ticked (${done.length})</button>` : ''}
-            </div>
             <div class="shop-stores">
-                ${stores.map(st => `<button class="shop-store-tab ${st === shopListStore ? 'active' : ''}" onclick='setShopListStore(${JSON.stringify(st).replace(/'/g, '&#39;')})'>${escapeHtml(st)} <span>${count(st)}</span></button>`).join('')}
+                ${stores.map(st => `<button class="shop-store-tab ${st === shopListStore ? 'active' : ''} store-${st === 'Woolworths' ? 'woolies' : st === 'Amazon' ? 'amazon' : 'other'}" onclick='setShopListStore(${jsArg(st)})'>${escapeHtml(st)} <span>${count(st)}</span></button>`).join('')}
+                ${done.length ? `<button class="btn btn-outline btn-sm" style="margin-left:auto;" onclick="clearBoughtItems()">Clear ticked (${done.length})</button>` : ''}
             </div>
-            <div class="form-row" style="margin:10px 0 6px;">
+            <div class="form-row" style="margin:12px 0 4px;">
                 <input id="shopAddName" type="text" list="shopItemNames" placeholder="Add an item" onkeydown="if(event.key==='Enter')addManualShoppingItem()" />
                 <input id="shopAddQty" type="text" placeholder="Qty" style="max-width:110px;" onkeydown="if(event.key==='Enter')addManualShoppingItem()" />
                 <button class="btn btn-primary btn-sm" onclick="addManualShoppingItem()">+ Add</button>
             </div>
             <datalist id="shopItemNames">${s.items.map(i => `<option value="${escapeHtml(i.name)}">`).join('')}</datalist>
-            ${open.length ? rows : `<div class="shop-empty">Nothing to buy at ${escapeHtml(shopListStore)}</div>`}
-            ${done.length ? `<div class="shop-section">In the trolley</div>${doneRows}` : ''}
+            ${open.length ? rows : `<div class="shop-empty">Nothing to buy at ${escapeHtml(shopListStore)}.</div>`}
+            ${done.length ? sectionHead('Other', 'In the trolley') + doneRows : ''}
             <details class="shop-aisles">
                 <summary>Aisles at your store</summary>
                 <div class="shop-aisle-hint">Set the aisle number for each section and the list follows your walk through the store.</div>
                 <div class="shop-aisle-grid">
                     ${SHOP_SECTIONS.filter(sec => aisleSections.includes(sec)).map(sec => `
-                        <label>${escapeHtml(sec)}<input type="text" value="${escapeHtml(s.aisles[sec] || '')}" placeholder="–" onchange='setAisle(${JSON.stringify(sec).replace(/'/g, '&#39;')}, this.value)' /></label>`).join('')}
+                        <label>${escapeHtml(sec)}<input type="text" value="${escapeHtml(s.aisles[sec] || '')}" placeholder="–" onchange='setAisle(${jsArg(sec)}, this.value)' /></label>`).join('')}
                 </div>
             </details>
         </div>`;
 }
 
-let shopDinnersOpen = true;
-
-function toggleShopDinners() {
-    shopDinnersOpen = !shopDinnersOpen;
-    renderShopping();
-}
-
-function renderMealPlanner(s) {
-    const plan = s.plan;
-    const book = getMealBook();
-    const totals = mealPlanTotals(plan, book);
-    const chip = m => {
-        const n = Number(plan.meals[m.id]) || 0;
-        if (!n) return `<button class="meal-chip" onclick="changeMealServes('${m.id}', 1)">${escapeHtml(m.name)}</button>`;
-        const label = m.type === 'Prep'
-            ? (n / m.serves !== 1 ? ` <b>×${niceNumber(n / m.serves)}</b>` : '')
-            : ` <b>${n} serve${n === 1 ? '' : 's'}</b>`;
-        return `<span class="meal-chip on ${m.type === 'Dinner' ? 'dinner' : ''}">
-            <button onclick="changeMealServes('${m.id}', -1)" title="Less">−</button>
-            ${escapeHtml(m.name)}${label}
-            <button onclick="changeMealServes('${m.id}', 1)" title="More">+</button></span>`;
-    };
-    // One group of chips (prep or dinners), by cuisine; folded shows only what's chosen
-    const group = (type, open, toggle, title) => {
-        const meals = book.meals.filter(m => m.type === type);
-        const chosen = meals.filter(m => plan.meals[m.id] > 0);
-        const cuisines = [...new Set(meals.map(m => m.cuisine))];
-        return `
-            <div class="shop-section with-btn">${title}${chosen.length ? ` <span class="shop-fold-count">${chosen.length} chosen</span>` : ''}
-                <button class="btn btn-outline btn-sm" onclick="${toggle}()">${open ? 'Hide' : 'Choose'}</button></div>
-            ${open ? cuisines.map(c => `
-                <div class="meal-cuisine">${escapeHtml(c)}</div>
-                <div class="meal-chips">${meals.filter(m => m.cuisine === c).map(chip).join('')}</div>`).join('') : `
-                <div class="meal-chips">${chosen.length ? chosen.map(chip).join('') : '<span class="shop-empty">None chosen</span>'}</div>`}`;
-    };
-    const baseUnit = (b, n) => b.unit === 'batch' ? (n === 1 ? 'batch' : 'batches') : b.unit === 'cup' ? (n === 1 ? 'cup' : 'cups') : b.unit;
-    const bases = totals.bases.filter(b => b.needed > 0 || b.batches > 0).map(b => {
-        const amount = b.unit === 'ml' ? Math.round(b.needed / 10) * 10 : Math.round(b.needed * 4) / 4;
-        const needText = b.needed > 0
-            ? `need ${b.unit === 'ml' ? amount : niceNumber(amount)} ${baseUnit(b, amount)}${b.unit !== 'batch' ? ` (${niceNumber(Math.max(0.25, Math.round(b.needed / b.per * 4) / 4))} batch)` : ''}`
-            : 'making ahead';
-        return `
-            <div class="base-row">
-                <div><div class="shop-name">${escapeHtml(b.name)}</div><div class="shop-qty">${needText}${b.note ? ` · ${escapeHtml(b.note)}` : ''}</div></div>
-                <div class="base-make">
-                    <span>${b.batches ? `Make ${niceNumber(b.batches)}` : 'From freezer'}</span>
-                    <button class="list-icon-btn" onclick="changeBaseBatches('${b.id}', -0.5)" ${b.batches ? '' : 'disabled'}>−</button>
-                    <button class="list-icon-btn" onclick="changeBaseBatches('${b.id}', 0.5)">+</button>
-                </div>
-            </div>`;
-    }).join('');
-    const otherBases = totals.bases.filter(b => !(b.needed > 0 || b.batches > 0));
-    const ingRow = i => {
-        const on = !!listEntry(i.name);
-        return `
-            <div class="shop-row ${on ? 'on-list' : ''}">
-                <button class="shop-check ${on ? 'on' : ''}" onclick='toggleShoppingItem(${JSON.stringify(i.name).replace(/'/g, '&#39;')}, ${JSON.stringify(i.qty === 'some' ? '' : i.qty).replace(/'/g, '&#39;')})' title="${on ? 'On the list' : 'Add to list'}">${on ? '✓' : ''}</button>
-                <span class="shop-name" title="${escapeHtml(i.meals.join(', '))}">${escapeHtml(i.name)}</span>
-                <span class="shop-qty">${escapeHtml(i.qty)}</span>
-                ${storeBadge(i.store)}
-            </div>`;
-    };
-    const fresh = totals.items.filter(i => i.kind === 'fresh');
-    const stock = totals.items.filter(i => i.kind === 'stockpile');
-    const anything = Object.keys(plan.meals).length || Object.keys(plan.bases).length;
-    const updated = s.mealBook?.updated ? `Your list, uploaded ${new Date(s.mealBook.updated).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}` : 'Built-in list';
-    return `
-        <div class="card">
-            <div class="card-header">
-                <div class="card-title">Meals This Week</div>
-                ${anything ? `<button class="btn btn-outline btn-sm" onclick="clearMealPlan()">New week</button>` : ''}
-            </div>
-            ${group('Prep', shopPlanOpen, 'toggleShopPlan', 'Meal prep')}
-            ${group('Dinner', shopDinnersOpen, 'toggleShopDinners', 'Fresh dinners')}
-            ${bases || otherBases.length ? `
-                <div class="shop-section">Bases</div>
-                ${bases}
-                ${otherBases.length ? `<div class="base-ahead">Make ahead: ${otherBases.map(b => `<button class="meal-chip small" onclick="changeBaseBatches('${b.id}', 1)">+ ${escapeHtml(b.name)}</button>`).join('')}</div>` : ''}` : ''}
-            ${fresh.length ? `
-                <div class="shop-section with-btn">To buy (fresh) <button class="btn btn-outline btn-sm" onclick="addMealIngredients('fresh')">Add all</button></div>
-                ${fresh.map(ingRow).join('')}` : ''}
-            ${stock.length ? `
-                <div class="shop-section with-btn">Check you have (stockpile) <button class="btn btn-outline btn-sm" onclick="addMealIngredients('stockpile')">Add all</button></div>
-                ${stock.map(ingRow).join('')}` : ''}
-            <div class="meal-file">
-                <span>${updated} · ${book.meals.length} meals</span>
-                <button class="btn btn-outline btn-sm" onclick="downloadMealsExcel()">Download Excel</button>
-                <button class="btn btn-outline btn-sm" onclick="uploadMealsExcel()">Upload Excel</button>
-            </div>
-        </div>`;
-}
-
+// Step 4: Fresh Regulars or Stockpile
 function renderShopRegulars(s, kind) {
     const editing = shopEditing[kind];
     const items = s.items.filter(i => i.kind === kind && i.regular)
         .sort((a, b) => sectionOrder(a.section) - sectionOrder(b.section) || a.name.localeCompare(b.name));
-    // Stockpile sections fold away (it's a long list); ones with something
-    // already on the shopping list, and fresh regulars, stay open
     const sections = [...new Set(items.map(i => i.section))];
     const isOpen = sec => kind === 'fresh' || editing || shopOpenSections.has(kind + ':' + sec);
     const rowFor = i => {
@@ -609,7 +697,7 @@ function renderShopRegulars(s, kind) {
         const on = !!listEntry(i.name);
         return `
             <div class="shop-row ${on ? 'on-list' : ''}">
-                <button class="shop-check ${on ? 'on' : ''}" onclick='toggleShoppingItem(${JSON.stringify(i.name).replace(/'/g, '&#39;')})' title="${on ? 'On the list' : 'Need to buy'}">${on ? '✓' : ''}</button>
+                <button class="shop-check ${on ? 'on' : ''}" onclick='toggleShoppingItem(${jsArg(i.name)})' title="${on ? 'On the list' : 'Need to buy'}">${on ? '✓' : ''}</button>
                 <span class="shop-name">${escapeHtml(i.name)}</span>
                 ${storeBadge(i.store)}
             </div>`;
@@ -618,15 +706,14 @@ function renderShopRegulars(s, kind) {
         const inSec = items.filter(i => i.section === sec);
         const onList = inSec.filter(i => listEntry(i.name)).length;
         const open = isOpen(sec);
-        const key = JSON.stringify(kind + ':' + sec).replace(/'/g, '&#39;');
-        const head = kind === 'fresh' || editing
-            ? `<div class="shop-section">${escapeHtml(sec)}</div>`
-            : `<button class="shop-section shop-fold" onclick='toggleShopSection(${key})'>
-                   <span>${open ? '▾' : '▸'} ${escapeHtml(sec)}</span>
-                   <span class="shop-fold-count">${onList ? `${onList} on list · ` : ''}${inSec.length}</span></button>`;
-        return `<div class="shop-block">${head}${open ? inSec.map(rowFor).join('') : ''}</div>`;
+        if (kind === 'fresh' || editing) return `<div class="shop-block">${sectionHead(sec)}${inSec.map(rowFor).join('')}</div>`;
+        return `<div class="shop-block">
+            <button class="shop-sec-head shop-fold" style="--sec:${sectionColour(sec)}" onclick='toggleShopSection(${jsArg(kind + ':' + sec)})'>
+                <span>${open ? '▾' : '▸'} ${escapeHtml(sec)}</span>
+                <span class="shop-fold-count">${onList ? `${onList} on list · ` : ''}${inSec.length}</span></button>
+            ${open ? inSec.map(rowFor).join('') : ''}</div>`;
     }).join('');
-    const title = kind === 'fresh' ? 'Fresh Regulars' : 'Stockpile';
+    const title = kind === 'fresh' ? 'Fresh regulars' : 'Stockpile';
     const hint = kind === 'fresh' ? 'Tick what you need to buy' : 'Open a section and tick anything running low';
     const inputId = kind === 'fresh' ? 'shopNewFresh' : 'shopNewStock';
     return `
@@ -641,5 +728,30 @@ function renderShopRegulars(s, kind) {
                 <input id="${inputId}" type="text" placeholder="Add ${kind === 'fresh' ? 'a regular' : 'a stockpile item'}" onkeydown="if(event.key==='Enter')addShopItem('${kind}')" />
                 <button class="btn btn-outline btn-sm" onclick="addShopItem('${kind}')">+ Add</button>
             </div>
+        </div>`;
+}
+
+// Previous weeks (saved when you press New week)
+function renderHistory(s, book) {
+    const label = d => d ? `Week of ${parseLocalDate(d).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}` : 'Earlier';
+    const weeks = [...s.history].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 12).map(h => `
+        <div class="history-week">
+            <div class="history-head">
+                <span class="history-date">${label(h.date)}</span>
+                <span>
+                    <button class="btn btn-outline btn-sm" onclick="planWeekAgain('${h.id}')">Plan again</button>
+                    <button class="list-icon-btn" onclick="deleteWeek('${h.id}')" title="Remove">×</button>
+                </span>
+            </div>
+            <div class="meal-chips">${h.meals.map(m => {
+                const meal = book.meals.find(x => sameName(x.name, m.name));
+                const size = m.type === 'Dinner' ? ` · ${m.serves} serve${m.serves === 1 ? '' : 's'}` : (meal && m.serves / meal.serves !== 1 ? ` ×${niceNumber(m.serves / meal.serves)}` : '');
+                return `<span class="history-chip" style="--type:${TYPE_COLOUR[m.type] || 'var(--c-purple)'}">${escapeHtml(m.name)}${size}</span>`;
+            }).join('')}</div>
+        </div>`).join('');
+    return `
+        <div class="card history-card">
+            <div class="card-header"><div class="card-title">Previous weeks</div></div>
+            ${weeks || '<div class="shop-empty">When you start a new week (New week, in step 1), the week you planned is kept here.</div>'}
         </div>`;
 }

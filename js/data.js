@@ -460,8 +460,7 @@ function buildNewYearData(old, newYear) {
         liabilities: copy(old.liabilities),
         renovation: copy(old.renovation),
         events: copy(old.events),
-        lists: copy(old.lists),
-        shopping: copy(old.shopping)
+        lists: copy(old.lists)
     };
 }
 
@@ -594,7 +593,9 @@ function normalizeAppData(rawData) {
         }))
     }));
 
-    normalized.shopping = normalizeShopping(normalized.shopping);
+    // Shopping now lives in its own shared document; older files carried it here
+    if (normalized.shopping) normalized.shopping = normalizeShopping(normalized.shopping);
+    else delete normalized.shopping;
 
     // Income: convert old format (hours1/hours2) to shifts if needed
     normalized.income = (normalized.income || []).map(week => {

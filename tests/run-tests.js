@@ -16,7 +16,7 @@ const vm = require('vm');
 
 const JS_DIR = path.join(__dirname, '..', 'js');
 const MODULES = ['data.js', 'file.js', 'stats.js', 'charts.js', 'expenses.js', 'income.js', 'budgets.js', 'loan.js',
-    'renovation.js', 'tax.js', 'networth.js', 'calendar.js', 'lists.js', 'shopping-data.js', 'shopping.js', 'meals-excel.js', 'backup-excel.js', 'weather-news.js', 'rate-tracker.js', 'investments.js', 'planning.js', 'summary.js', 'ui.js'];
+    'renovation.js', 'tax.js', 'networth.js', 'calendar.js', 'lists.js', 'shopping-data.js', 'shared-shopping.js', 'shopping.js', 'meals-excel.js', 'backup-excel.js', 'weather-news.js', 'rate-tracker.js', 'investments.js', 'planning.js', 'summary.js', 'ui.js'];
 
 // Data as the app would store it (normalised), for seeding the fake database
 function normalizeForTest(app, raw) {
@@ -957,7 +957,7 @@ function ok(cond, msg) { if (!cond) throw new Error(msg || 'condition false'); }
     run("addToShoppingList('Chicken breast', '600 g'); addToShoppingList('Chicken breast', '300 g')");
     test('Adding the same item twice combines the quantities', () => eq(run("getShopping().list.find(e => e.name === 'Chicken breast').qty"), '600 g + 300 g'));
 
-    run("setAisle('Meat', '12'); setAisle('Fruit & Veg', '1'); renderShopping()");
+    run("shopStep = 5; setAisle('Meat', '12'); setAisle('Fruit & Veg', '1'); renderShopping()");
     test('Shopping list: sorted by your aisle numbers, labelled with them', () => {
         const html = app.els.shoppingContainer.innerHTML;
         ok(html.indexOf('Aisle 1 · Fruit &amp; Veg') > -1 && html.indexOf('Aisle 1 · Fruit &amp; Veg') < html.indexOf('Aisle 12 · Meat'), html.slice(0, 300));
@@ -976,9 +976,24 @@ function ok(cond, msg) { if (!cond) throw new Error(msg || 'condition false'); }
     run(`removeShopItem('${gid}')`);
     test('Removing a meal ingredient from Stockpile keeps it known for the planner', () => ok(run("getShopping().items.find(i => i.name === 'Garam masala').regular === false")));
 
-    test('Shopping data carries into a new financial year', () => ok(run("JSON.stringify(buildNewYearData(appData, 2027).shopping) === JSON.stringify(appData.shopping)")));
+    test('New FY doesn\'t copy Shopping (it\'s shared, not per year)', () => ok(run("buildNewYearData(appData, 2027).shopping === undefined")));
+    run("changeMealServes('egg-muffins', 1)");
+    test('Snacks: + adds a whole batch', () => {
+        eq(run("getShopping().plan.meals['egg-muffins']"), 12);
+        eq(item('Feta').qty, '35 g');
+        ok(/Snacks/.test(app.els.shoppingContainer.innerHTML), 'snacks group shown');
+    });
+    const planned = run("Object.keys(getShopping().plan.meals).length");
     run("clearMealPlan()");
     test('New week clears the meal plan', () => ok(run("Object.keys(getShopping().plan.meals).length === 0 && Object.keys(getShopping().plan.bases).length === 0")));
+    test('New week keeps the week in Previous weeks', () => {
+        const h = JSON.parse(run("JSON.stringify(getShopping().history[0])"));
+        ok(h && h.meals.length === planned && h.meals.some(m => m.name === 'Egg Muffins' && m.type === 'Snack' && m.serves === 12) && h.date, JSON.stringify(h));
+        ok(/Previous weeks/.test(app.els.shoppingContainer.innerHTML) && /Egg Muffins/.test(app.els.shoppingContainer.innerHTML), 'shown');
+    });
+    run("planWeekAgain(getShopping().history[0].id)");
+    test('Plan again copies a previous week back in', () => eq(run("getShopping().plan.meals['egg-muffins']"), 12));
+    run("clearMealPlan(); getShopping().plan = { v: 2, meals: {}, bases: {} }");
 
     // Older data from before the recipe book update
     const old = makeApp('2026-11-15T09:00:00+10:00');
@@ -1072,7 +1087,8 @@ const backupRoundTrip = (async () => {
     const result = await app.run("readBackupWorkbook(__Excel, __buf)");
     test('Excel backup: holds all the data exactly', () => {
         app.ctx.__text = result.text;
-        eq(app.run("JSON.stringify(normalizeAppData(JSON.parse(__text)), null, 2)"), before);
+        eq(app.run("(d => { delete d.shopping; return JSON.stringify(d, null, 2); })(normalizeAppData(JSON.parse(__text)))"), before);
+        ok(app.run("JSON.parse(__text).shopping.items.length") > 100, 'shopping included');
         eq(result.warnings.length, 0, 'no edits');
     });
     // Import it into a fresh account
@@ -1096,6 +1112,87 @@ const backupRoundTrip = (async () => {
     test('Import: a spreadsheet that isn\'t a backup is refused with a clear message', () => ok(/isn't a backup made by this app/.test(refused), refused));
 })();
 module.exports.pending = Promise.all([module.exports.pending, backupRoundTrip]);
+
+// Shared shopping: two accounts, live updates, edits at the same time
+const sharingChecks = (async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    const backend = fakeSharedBackend();
+    // Nic: an older year file that still carries Shopping
+    const nic = makeApp('2026-11-15T09:00:00+10:00');
+    const nicCloud = fakeCloud('nic-uid', 'Nic', backend);
+    nicCloud.user = { currentYear: 2026 };
+    const raw = sampleData();
+    raw.shopping = { list: [{ id: 'old1', name: 'Milk', qty: '2 L' }] };
+    nicCloud.years[2026] = { json: JSON.stringify(raw), rev: 1, closedOn: null };
+    nic.ctx.__cloud = nicCloud;
+    await nic.run("cloudStore = __cloud; signedInUser = { uid: 'nic-uid', email: 'nic@gmail.com', name: 'Nic' }; openStartYear()");
+    test('Sharing: Shopping moves out of the year file into its own document', () => {
+        ok(backend.docs['nic-uid'] && JSON.parse(backend.docs['nic-uid'].json).list.some(e => e.name === 'Milk'), 'shared doc made from the old data');
+        ok(nic.run("appData.shopping === undefined"), 'not kept in the year');
+    });
+    nic.run("updateBudget('Food', '455')");
+    await nic.run('autosave()');
+    test('Sharing: the year is saved without Shopping', () => ok(!JSON.parse(nicCloud.years[2026].json).shopping && JSON.parse(nicCloud.years[2026].json).budgets.Food === 455));
+
+    nic.els.shareEmail = { value: 'Her@Gmail.com' };
+    await nic.run('shareShoppingWith()');
+    test('Sharing: adding someone records their email (lower case)', () => ok(backend.docs['nic-uid'].members.includes('her@gmail.com') && backend.members['her@gmail.com'].owner === 'nic-uid'));
+    test('Sharing: the owner sees who it\'s shared with', () => ok(/her@gmail\.com/.test(nic.els.shoppingContainer.innerHTML) && /Sharing/.test(nic.els.shoppingContainer.innerHTML)));
+
+    // Her account
+    const her = makeApp('2026-11-15T09:00:00+10:00');
+    const herCloud = fakeCloud('her-uid', 'her@gmail.com', backend);
+    her.ctx.__cloud = herCloud;
+    const share = await herCloud.getMembership('her@gmail.com');
+    her.ctx.__share = share;
+    await her.run("cloudStore = __cloud; signedInUser = { uid: 'her-uid', email: 'her@gmail.com', name: 'Her' }; enterMemberMode(__share)");
+    test('Shared view: she sees Nic\'s shopping and no finances', () => {
+        ok(her.run("getShopping().list.some(e => e.name === 'Milk')"), 'shopping');
+        ok(her.run("memberMode && (appData.expenses || []).length === 0 && getTotalIncome() === 0 && appData.budgets.Food !== 455"), 'no finances');
+        ok(/Shared by Nic/.test(her.els.shoppingContainer.innerHTML), 'labelled');
+    });
+    const yearWritesBefore = nicCloud.writes;
+    await her.run('saveData()');
+    test('Shared view: saving never touches Nic\'s years', () => eq(nicCloud.writes, yearWritesBefore));
+
+    // She adds bread; it reaches Nic's screen
+    her.run("addToShoppingList('Bread', '1 loaf'); updateUI()");
+    await wait(3000);
+    test('Live: her change appears on Nic\'s screen', () => ok(nic.run("getShopping().list.some(e => e.name === 'Bread')")));
+
+    // At the same moment: Nic ticks milk, she adds eggs
+    const milkId = nic.run("getShopping().list.find(e => e.name === 'Milk').id");
+    nic.run(`getShopping().list.find(e => e.id === '${milkId}').done = true`);
+    her.run("addToShoppingList('Eggs', '12')");
+    nic.run('updateUI()'); her.run('updateUI()');
+    await wait(2500);
+    test('At the same time: both changes are kept on both screens', () => {
+        for (const [who, app] of [['Nic', nic], ['Her', her]]) {
+            ok(app.run(`getShopping().list.find(e => e.id === '${milkId}').done === true`), who + ': milk ticked');
+            ok(app.run("getShopping().list.some(e => e.name === 'Eggs')"), who + ': eggs added');
+        }
+        const saved = JSON.parse(backend.docs['nic-uid'].json);
+        ok(saved.list.find(e => e.id === milkId).done && saved.list.some(e => e.name === 'Eggs'), 'saved');
+    });
+
+    // Merge rules on their own
+    test('Merge: deletes, edits and additions from both sides', () => {
+        const base = { items: [], aisles: {}, plan: { meals: { a: 5 }, bases: {} }, list: [{ id: '1', name: 'A', done: false }, { id: '2', name: 'B', done: false }] };
+        const local = { ...base, plan: { meals: { a: 5, b: 2 }, bases: {} }, list: [{ id: '1', name: 'A', done: true }, { id: '3', name: 'C' }] };
+        const remote = { ...base, plan: { meals: {}, bases: {} }, list: [{ id: '1', name: 'A', done: false, qty: '2' }, { id: '2', name: 'B', done: false }, { id: '4', name: 'D' }] };
+        nic.ctx.__m = [base, local, remote];
+        const m = JSON.parse(nic.run("JSON.stringify(mergeShopping(...__m))"));
+        eq(m.list.map(e => e.id).join(''), '143', 'B removed here, D added there, C added here');
+        ok(m.list[0].done === true && m.list[0].qty === '2', 'tick here + qty there both kept');
+        ok(m.plan.meals.b === 2 && !('a' in m.plan.meals), 'meal added here kept, meal removed there stays removed');
+    });
+
+    nic.ctx.confirm = () => true;
+    await nic.run("stopSharingWith('her@gmail.com')");
+    test('Sharing: removing someone stops their access', () => ok(!backend.docs['nic-uid'].members.length && !backend.members['her@gmail.com']));
+    nic.run('stopSharedShopping()'); her.run('stopSharedShopping()');
+})();
+module.exports.pending = Promise.all([module.exports.pending, sharingChecks]);
 
 // Lists: dragging whole lists
 {
@@ -1292,8 +1389,41 @@ module.exports.pending = Promise.all([module.exports.pending, backupRoundTrip]);
 // STORAGE: SAVING, AUTOSAVE, YEARS, IMPORT (fake database, no network)
 // ================================================================
 // Same methods as the Firestore store in file.js, kept in memory
-function fakeCloud() {
+// shared: the shopping backend, shared between fake devices/accounts
+function fakeSharedBackend() { return { docs: {}, members: {}, watchers: [], writes: 0 }; }
+function fakeCloud(uid = 'me', name = 'Nic', shared = fakeSharedBackend()) {
+    const notify = owner => setTimeout(() => shared.watchers.filter(w => w.owner === owner).forEach(w => {
+        const d = shared.docs[owner];
+        w.cb({ json: d.json, rev: d.rev, members: [...d.members] });
+    }), 0);
     const store = {
+        uid, shared,
+        async getShared(owner) { const d = shared.docs[owner]; return d ? { json: d.json, rev: d.rev, members: [...d.members] } : null; },
+        async putShared(owner, json, expectRev, force, meta = {}) {
+            if (store.offline) throw new Error('offline');
+            const d = shared.docs[owner];
+            const rev = d ? d.rev : 0;
+            if (!force && rev !== expectRev) return { conflict: true, rev };
+            if (!d && owner !== uid) throw new Error('permission denied');
+            if (d && owner !== uid && !d.members.includes(name.toLowerCase())) throw new Error('permission denied');
+            shared.docs[owner] = { owner, ownerName: d ? d.ownerName : (meta.ownerName || name), members: d ? d.members : [], json, rev: rev + 1 };
+            shared.writes++;
+            notify(owner);
+            return { ok: true, rev: rev + 1 };
+        },
+        watchShared(owner, cb) {
+            const w = { owner, cb };
+            shared.watchers.push(w);
+            return () => { shared.watchers = shared.watchers.filter(x => x !== w); };
+        },
+        async getMembership(email) { return shared.members[(email || '').toLowerCase()] || null; },
+        async setShoppingMembers(members, { add, remove } = {}) {
+            shared.docs[uid].members = members;
+            if (add) shared.members[add] = { owner: uid, ownerName: name };
+            if (remove) delete shared.members[remove];
+            notify(uid);
+            return members;
+        },
         user: null, years: {}, writes: 0, offline: false,
         async getUser() { return store.user; },
         async setCurrentYear(y) { store.user = { ...(store.user || {}), currentYear: y }; },

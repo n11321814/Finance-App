@@ -35,12 +35,30 @@ In Firebase open **Authentication > Settings > Authorized domains**, click **Add
 
 From then on the app saves to your account automatically. **Backup** downloads the year on screen as an Excel file you can open and read, so you can keep copies in OneDrive. **Import** restores those Excel backups (and still accepts the older JSON files). Changes made to a backup in Excel aren't imported.
 
+## Sharing Shopping with someone
+
+Shopping is stored separately from your finances so you can share it. People you add sign in with their own Google account and see only the Shopping tab. The database rules stop them reading your finances, not just the screen.
+
+1. If you published the rules before November 2026, publish them again: open **Firestore > Rules**, replace everything with the contents of `firestore.rules`, and click **Publish**.
+2. In the app open the **Shopping** tab, scroll to **Sharing**, enter their Gmail address and press **Share**.
+3. They open the same site and click **Sign in with Google**. They land straight on the shared Shopping tab.
+
+Changes save a moment after they're made and appear on the other person's screen straight away. If you both change something at the same moment, both changes are kept. Press **Remove** under Sharing to stop sharing.
+
+To check the rules (optional), open **Firestore > Rules > Rules Playground**, tick **Authenticated** and try these. Use your own uid (shown under **Authentication > Users**).
+
+| Simulate | Location | Signed in as | Expected |
+|---|---|---|---|
+| get | `users/YOUR-UID/years/2026` | a different uid | Denied |
+| get | `shared/YOUR-UID` | your uid | Allowed |
+| get | `members/someone@gmail.com` | a uid with email someone@gmail.com (provider google.com) | Allowed |
+
 ## Optional: lock the project to your account
 
-The rules already stop anyone seeing your data. Anyone else who signs in would only get their own empty space in your project. To block other accounts completely, change both `request.auth.uid == uid` conditions in `firestore.rules` to
+The rules already stop anyone seeing your data. Anyone else who signs in would only get their own empty space in your project. To block other accounts completely, change the `signedIn()` function in `firestore.rules` to list the accounts allowed to use the app (yours and anyone you share with):
 
 ```
-request.auth.uid == uid && request.auth.token.email == "you@gmail.com"
+function signedIn() { return request.auth != null && request.auth.token.email in ["you@gmail.com", "her@gmail.com"]; }
 ```
 
 then publish the rules again.

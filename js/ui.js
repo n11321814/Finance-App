@@ -41,4 +41,5 @@ function updateUI() {
     try { renderPlanning(); } catch(e) { console.warn('renderPlanning failed:', e); }
     try { renderEoySummary(); } catch(e) { console.warn('renderEoySummary failed:', e); }
     try { refreshUnsavedState(); } catch(e) { console.warn('refreshUnsavedState failed:', e); }
+    try { refreshShoppingSync(); } catch(e) { console.warn('refreshShoppingSync failed:', e); }
 }
