@@ -46,6 +46,8 @@ function normalizeShopping(s) {
     const rename = n => SHOP_RENAMED[n] || n;
     const seen = new Set();
     const plan = s.plan?.v === 2 ? s.plan : { v: 2, meals: {}, bases: {} };   // older plans counted batches
+    // Nov 2026: the Home check lists were cleared to start fresh (Amazon items kept)
+    const clearHome = !s.homeCleared;
     return {
         items: items.filter(i => i && i.name).map(i => ({
             id: i.id || genId(),
@@ -53,12 +55,14 @@ function normalizeShopping(s) {
             kind: i.kind === 'stockpile' ? 'stockpile' : 'fresh',
             section: SHOP_SECTIONS.includes(i.section) ? i.section : 'Other',
             store: i.store || 'Woolworths',
-            regular: i.regular !== false
+            regular: i.regular !== false && (!clearHome || (i.store || 'Woolworths') === 'Amazon')
         })).filter(i => !seen.has(i.name.toLowerCase()) && seen.add(i.name.toLowerCase())),
+        homeCleared: true,
         aisles: { ...(s.aisles || {}) },
         list: (s.list || []).filter(e => e && e.name).map(e => ({
             id: e.id || genId(), name: rename(String(e.name)), qty: e.qty || '',
-            store: e.store || 'Woolworths', section: SHOP_SECTIONS.includes(e.section) ? e.section : 'Other', done: !!e.done
+            store: e.store || 'Woolworths', section: SHOP_SECTIONS.includes(e.section) ? e.section : 'Other', done: !!e.done,
+            from: Array.isArray(e.from) && e.from.length ? e.from.filter(f => ['meals', 'home', 'manual'].includes(f)) : ['manual']
         })),
         plan: { v: 2, started: plan.started || null, meals: { ...(plan.meals || {}) }, bases: { ...(plan.bases || {}) } },
         // Previous weeks: { id, date, meals: [{ name, type, serves }] }, newest first
@@ -216,38 +220,54 @@ function mealPlanTotals(plan = getShopping().plan, book = getMealBook()) {
 // SHOPPING LIST
 // ================================================================
 
-function listEntry(name) {
-    return getShopping().list.find(e => !e.done && sameName(e.name, name));
+// Each list entry remembers where it came from (from: 'meals', 'home',
+// 'manual'), so Ingredients and Home check each show only their own ticks
+function listEntry(name, source) {
+    const e = getShopping().list.find(x => !x.done && sameName(x.name, name));
+    return e && (!source || e.from.includes(source)) ? e : undefined;
 }
 
-function addToShoppingList(name, qty = '') {
+function addToShoppingList(name, qty = '', source = 'manual') {
     name = String(name || '').trim();
     if (!name) return;
     const s = getShopping();
     const existing = listEntry(name);
     if (existing) {
-        if (qty && existing.qty && existing.qty !== qty) existing.qty = `${existing.qty} + ${qty}`;
+        if (!existing.from.includes(source)) existing.from.push(source);
+        if (source === 'meals') existing.qty = qty || existing.qty;   // the meals' amount is the useful one
+        else if (qty && existing.qty && existing.qty !== qty) existing.qty = `${existing.qty} + ${qty}`;
         else if (qty) existing.qty = qty;
         return;
     }
     const info = shopItem(name);
-    s.list.push({ id: genId(), name: info.name || name, qty, store: info.store, section: info.section, done: false });
+    s.list.push({ id: genId(), name: info.name || name, qty, store: info.store, section: info.section, done: false, from: [source] });
 }
 
-function removeFromShoppingList(name) {
+// Takes one reason off an entry; the entry goes when nothing needs it
+function removeFromShoppingList(name, source) {
     const s = getShopping();
-    s.list = s.list.filter(e => e.done || !sameName(e.name, name));
+    const e = listEntry(name);
+    if (!e) return;
+    e.from = source ? e.from.filter(f => f !== source) : [];
+    if (source === 'meals') e.qty = '';
+    if (!e.from.length) s.list = s.list.filter(x => x !== e);
 }
 
-// Regulars, stockpile and meal ingredient ticks: on the list or not
-function toggleShoppingItem(name, qty = '') {
-    if (listEntry(name)) removeFromShoppingList(name);
-    else addToShoppingList(name, qty);
+// Ticks on Ingredients (source 'meals') and Home check (source 'home')
+function toggleShoppingItem(name, qty = '', source = 'home') {
+    if (listEntry(name, source)) removeFromShoppingList(name, source);
+    else addToShoppingList(name, qty, source);
     updateUI();
 }
 
 function addMealIngredients(kind) {
-    mealPlanTotals().items.filter(i => i.kind === kind && !listEntry(i.name)).forEach(i => addToShoppingList(i.name, i.qty === 'some' ? '' : i.qty));
+    mealPlanTotals().items.filter(i => i.kind === kind && !listEntry(i.name, 'meals'))
+        .forEach(i => addToShoppingList(i.name, i.qty === 'some' ? '' : i.qty, 'meals'));
+    updateUI();
+}
+
+function clearMealIngredients(kind) {
+    mealPlanTotals().items.filter(i => i.kind === kind).forEach(i => removeFromShoppingList(i.name, 'meals'));
     updateUI();
 }
 
@@ -413,6 +433,11 @@ function removeShopItem(id) {
     updateUI();
 }
 
+function removeShopItemAsk(id) {
+    const item = getShopping().items.find(i => i.id === id);
+    if (item && confirm(`Remove ${item.name} from this list?`)) removeShopItem(id);
+}
+
 function addShopItem(kind) {
     const input = document.getElementById(kind === 'fresh' ? 'shopNewFresh' : 'shopNewStock');
     const name = (input?.value || '').trim();
@@ -456,7 +481,7 @@ const SHOP_STEPS = [
     { n: 1, key: 'meals', title: 'Meals', hint: 'Pick this week\'s meal prep, dinners and snacks', colour: 'var(--c-purple)' },
     { n: 2, key: 'bases', title: 'Bases', hint: 'From the freezer, or make a batch', colour: 'var(--c-yellow)' },
     { n: 3, key: 'ingredients', title: 'Ingredients', hint: 'Tick what you need to buy', colour: 'var(--c-orange)' },
-    { n: 4, key: 'regulars', title: 'Regulars', hint: 'Fresh basics and anything running low', colour: 'var(--stat-disposable)' },
+    { n: 4, key: 'regulars', title: 'Home check', hint: 'Everyday things to top up (not for your meals)', colour: 'var(--stat-disposable)' },
     { n: 5, key: 'shop', title: 'Shop', hint: 'Your list, in aisle order', colour: 'var(--c-cyan)' }
 ];
 const TYPE_COLOUR = { Prep: 'var(--c-purple)', Dinner: 'var(--c-orange)', Snack: 'var(--c-yellow)' };
@@ -497,8 +522,8 @@ function renderShopping() {
     const totals = mealPlanTotals(s.plan, book);
     const chosen = book.meals.filter(m => s.plan.meals[m.id] > 0);
     const basesInPlay = totals.bases.filter(b => b.needed > 0 || b.batches > 0);
-    const toBuy = totals.items.filter(i => i.kind === 'fresh' && !listEntry(i.name)).length;
-    const onListRegular = s.items.filter(i => i.regular && listEntry(i.name)).length;
+    const toBuy = totals.items.filter(i => i.kind === 'fresh' && !listEntry(i.name, 'meals')).length;
+    const onListRegular = s.items.filter(i => i.regular && listEntry(i.name, 'home')).length;
     const open = s.list.filter(e => !e.done).length;
     const badges = { meals: chosen.length, bases: basesInPlay.length, ingredients: toBuy, regulars: onListRegular, shop: open };
     const step = SHOP_STEPS[shopStep - 1];
@@ -598,10 +623,10 @@ function renderBasesStep(totals) {
 // Step 3: everything the plan needs, ticked onto the list
 function renderIngredientsStep(totals) {
     const row = i => {
-        const on = !!listEntry(i.name);
+        const on = !!listEntry(i.name, 'meals');
         return `
             <div class="shop-row ${on ? 'on-list' : ''}">
-                <button class="shop-check ${on ? 'on' : ''}" onclick='toggleShoppingItem(${jsArg(i.name)}, ${jsArg(i.qty === 'some' ? '' : i.qty)})' title="${on ? 'On the list' : 'Add to list'}">${on ? '✓' : ''}</button>
+                <button class="shop-check ${on ? 'on' : ''}" onclick='toggleShoppingItem(${jsArg(i.name)}, ${jsArg(i.qty === 'some' ? '' : i.qty)}, "meals")' title="${on ? 'On the list' : 'Add to list'}">${on ? '✓' : ''}</button>
                 <div class="shop-main"><span class="shop-name">${escapeHtml(i.name)}</span><span class="shop-for">${escapeHtml(i.meals.join(', '))}</span></div>
                 <span class="shop-qty">${escapeHtml(i.qty)}</span>
                 ${storeBadge(i.store)}
@@ -614,12 +639,12 @@ function renderIngredientsStep(totals) {
         <div class="grid-2 shop-grid">
             <div class="card">
                 <div class="card-header"><div class="card-title">To buy <span class="shop-sub">fresh</span></div>
-                    ${fresh.length ? `<button class="btn btn-outline btn-sm" onclick="addMealIngredients('fresh')">Add all</button>` : ''}</div>
+                    ${fresh.length ? `<span class="shop-card-btns"><button class="btn btn-outline btn-sm" onclick="addMealIngredients('fresh')">Add all</button><button class="btn btn-outline btn-sm" onclick="clearMealIngredients('fresh')">Clear all</button></span>` : ''}</div>
                 ${fresh.map(row).join('') || '<div class="shop-empty">Nothing fresh needed.</div>'}
             </div>
             <div class="card">
                 <div class="card-header"><div class="card-title">Check you have <span class="shop-sub">stockpile</span></div>
-                    ${stock.length ? `<button class="btn btn-outline btn-sm" onclick="addMealIngredients('stockpile')">Add all</button>` : ''}</div>
+                    ${stock.length ? `<span class="shop-card-btns"><button class="btn btn-outline btn-sm" onclick="addMealIngredients('stockpile')">Add all</button><button class="btn btn-outline btn-sm" onclick="clearMealIngredients('stockpile')">Clear all</button></span>` : ''}</div>
                 ${stock.map(row).join('') || '<div class="shop-empty">No pantry items needed.</div>'}
             </div>
         </div>`;
@@ -694,17 +719,18 @@ function renderShopRegulars(s, kind) {
                 <select class="shop-mini-select" onchange="updateShopItem('${i.id}', 'store', this.value)">${storeOptions(i.store)}</select>
                 <button class="list-icon-btn" onclick="removeShopItem('${i.id}')" title="Remove from this list">×</button>
             </div>`;
-        const on = !!listEntry(i.name);
+        const on = !!listEntry(i.name, 'home');
         return `
             <div class="shop-row ${on ? 'on-list' : ''}">
-                <button class="shop-check ${on ? 'on' : ''}" onclick='toggleShoppingItem(${jsArg(i.name)})' title="${on ? 'On the list' : 'Need to buy'}">${on ? '✓' : ''}</button>
+                <button class="shop-check ${on ? 'on' : ''}" onclick='toggleShoppingItem(${jsArg(i.name)}, "", "home")' title="${on ? 'On the list' : 'Need to buy'}">${on ? '✓' : ''}</button>
                 <span class="shop-name">${escapeHtml(i.name)}</span>
                 ${storeBadge(i.store)}
+                <button class="list-icon-btn shop-remove" onclick='removeShopItemAsk(${jsArg(i.id)})' title="Remove from this list">×</button>
             </div>`;
     };
     const rows = sections.map(sec => {
         const inSec = items.filter(i => i.section === sec);
-        const onList = inSec.filter(i => listEntry(i.name)).length;
+        const onList = inSec.filter(i => listEntry(i.name, 'home')).length;
         const open = isOpen(sec);
         if (kind === 'fresh' || editing) return `<div class="shop-block">${sectionHead(sec)}${inSec.map(rowFor).join('')}</div>`;
         return `<div class="shop-block">
@@ -713,8 +739,8 @@ function renderShopRegulars(s, kind) {
                 <span class="shop-fold-count">${onList ? `${onList} on list · ` : ''}${inSec.length}</span></button>
             ${open ? inSec.map(rowFor).join('') : ''}</div>`;
     }).join('');
-    const title = kind === 'fresh' ? 'Fresh regulars' : 'Stockpile';
-    const hint = kind === 'fresh' ? 'Tick what you need to buy' : 'Open a section and tick anything running low';
+    const title = kind === 'fresh' ? 'Fresh basics' : 'Pantry & household';
+    const hint = kind === 'fresh' ? 'Milk, bread and other basics: tick what you need' : 'Open a section and tick anything running low';
     const inputId = kind === 'fresh' ? 'shopNewFresh' : 'shopNewStock';
     return `
         <div class="card">
@@ -723,9 +749,9 @@ function renderShopRegulars(s, kind) {
                 <button class="btn btn-outline btn-sm" onclick="toggleShopEdit('${kind}')">${editing ? 'Done' : 'Edit'}</button>
             </div>
             <div class="shop-aisle-hint">${editing ? 'Rename, move to a section, or change where to buy it' : hint}</div>
-            <div class="shop-columns">${rows || '<div class="shop-empty">Nothing here yet</div>'}</div>
+            <div class="${editing ? '' : 'shop-columns'}">${rows || '<div class="shop-empty">Nothing here yet</div>'}</div>
             <div class="form-row" style="margin-top:10px;">
-                <input id="${inputId}" type="text" placeholder="Add ${kind === 'fresh' ? 'a regular' : 'a stockpile item'}" onkeydown="if(event.key==='Enter')addShopItem('${kind}')" />
+                <input id="${inputId}" type="text" placeholder="Add ${kind === 'fresh' ? 'a fresh basic' : 'a pantry or household item'}" onkeydown="if(event.key==='Enter')addShopItem('${kind}')" />
                 <button class="btn btn-outline btn-sm" onclick="addShopItem('${kind}')">+ Add</button>
             </div>
         </div>`;

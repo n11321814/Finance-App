@@ -1946,3 +1946,10 @@ button.shop-sec-head { cursor: pointer; }
 /* Long "for: meal names" lines shorten instead of widening the page */
 .shop-grid > *, .shop-grid .card { min-width: 0; }
 #tab-shopping .shop-row { min-width: 0; }
+/* Regulars: name on its own line when editing; × to remove */
+#tab-shopping .shop-row.editing { flex-wrap: wrap; row-gap: 6px; }
+#tab-shopping .shop-row.editing .shop-edit-name { flex: 1 1 100%; min-width: 0; font-size: 14px; }
+#tab-shopping .shop-row.editing .shop-mini-select { flex: 1; max-width: none; }
+.shop-remove { opacity: 0.45; }
+.shop-row:hover .shop-remove { opacity: 1; }
+.shop-card-btns { display: flex; gap: 6px; }

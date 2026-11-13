@@ -892,7 +892,11 @@ function ok(cond, msg) { if (!cond) throw new Error(msg || 'condition false'); }
     const run = code => app.run(code);
     const totals = () => JSON.parse(run("JSON.stringify(mealPlanTotals())"));
     const item = name => totals().items.find(i => i.name === name);
-    test('Shopping: a new file starts with the default items', () => ok(run("getShopping().items.length") > 150 && run("getShopping().items.some(i => i.name === 'Garam masala' && i.kind === 'stockpile' && i.regular)")));
+    test('Shopping: starts with the default items; Home check keeps only the Amazon ones', () => {
+        ok(run("getShopping().items.length") > 150, 'items');
+        ok(run("getShopping().items.filter(i => i.regular).every(i => i.store === 'Amazon') && getShopping().items.some(i => i.regular)"), 'only Amazon on Home check');
+        ok(run("getShopping().homeCleared === true"), 'done once');
+    });
     test('Shopping: household items are labelled Amazon, fresh ones Woolworths', () => ok(run("shopItem('Toilet paper').store") === 'Amazon' && run("shopItem('Chicken breast').store") === 'Woolworths'));
     test('Meal book: built-in list has prep meals, dinners and bases', () => {
         ok(run("getMealBook().meals.filter(m => m.type === 'Prep').length") >= 25, 'prep');
@@ -952,12 +956,22 @@ function ok(cond, msg) { if (!cond) throw new Error(msg || 'condition false'); }
     test('Stockpile: ticking adds to the Amazon list', () => ok(run("getShopping().list.find(e => e.name === 'Toilet paper').store") === 'Amazon'));
     run("toggleShoppingItem('Toilet paper')");
     test('...and unticking takes it off', () => ok(!run("getShopping().list.some(e => e.name === 'Toilet paper')")));
-    run("toggleShoppingItem('Chicken breast')");
-    test('Ticking something already on the list takes it off', () => ok(!run("getShopping().list.some(e => e.name === 'Chicken breast' && !e.done)")));
+    run("toggleShoppingItem('Chicken breast', '', 'home')");
+    test('Home check ticks are separate from meal ingredient ticks', () => {
+        ok(run("!!listEntry('Chicken breast', 'home') && !!listEntry('Chicken breast', 'meals')"), 'both');
+        eq(run("getShopping().list.filter(e => e.name === 'Chicken breast').length"), 1, 'one list entry');
+    });
+    run("toggleShoppingItem('Chicken breast', '', 'home')");
+    test('Unticking on Home check leaves the meal\'s tick and amount', () => ok(run("!listEntry('Chicken breast', 'home') && listEntry('Chicken breast', 'meals').qty === '1.5 kg'")));
+    run("clearMealIngredients('fresh')");
+    test('Clear all on Ingredients takes the meal items off the list', () => ok(!run("getShopping().list.some(e => e.name === 'Chicken breast' && !e.done)")));
+    run("toggleShoppingItem('Milk', '', 'home'); addMealIngredients('fresh'); clearMealIngredients('fresh')");
+    test('...but keeps things ticked on Home check', () => ok(run("!!listEntry('Milk', 'home')")));
+    run("toggleShoppingItem('Milk', '', 'home')");
     run("addToShoppingList('Chicken breast', '600 g'); addToShoppingList('Chicken breast', '300 g')");
     test('Adding the same item twice combines the quantities', () => eq(run("getShopping().list.find(e => e.name === 'Chicken breast').qty"), '600 g + 300 g'));
 
-    run("shopStep = 5; setAisle('Meat', '12'); setAisle('Fruit & Veg', '1'); renderShopping()");
+    run("addToShoppingList('Limes', '2'); shopStep = 5; setAisle('Meat', '12'); setAisle('Fruit & Veg', '1'); renderShopping()");
     test('Shopping list: sorted by your aisle numbers, labelled with them', () => {
         const html = app.els.shoppingContainer.innerHTML;
         ok(html.indexOf('Aisle 1 · Fruit &amp; Veg') > -1 && html.indexOf('Aisle 1 · Fruit &amp; Veg') < html.indexOf('Aisle 12 · Meat'), html.slice(0, 300));
