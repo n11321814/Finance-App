@@ -59,13 +59,13 @@ function splitPartnerTests() {
         ok(!/value="999"/.test(app.els.expenseList.innerHTML), 'unsplit hidden');
         app.run('setExpenseSplitFilter(false)');
     });
-    test('Living in Home Cost: per week since 16 Nov, less partner payments', () => {
+    test('Living in Home Cost: per week since 16 Nov, partner payments not taken off', () => {
         const raw = base();
         raw.partnerPayments = [{ date: '2026-11-16', amount: 60 }, { date: '2026-11-23', amount: 60 }, { date: '2026-11-02', amount: 60 }];
         app.load(raw);
-        // Food from the sample on 1 Nov is before the 16th. Spent 150 + 30, partner 120 since 16 Nov, over 2 weeks = $30/wk
+        // Food from the sample on 1 Nov is before the 16th. Spent 150 + 30 since 16 Nov, over 2 weeks = $90/wk
         const txt = strip(app.els.livingInHomeCost.innerHTML);
-        ok(/^\$ 30 \/wk \$130\/mo · since 16 Nov · partner paid \$120$/.test(txt), txt);
+        ok(/^\$ 90 \/wk \$390\/mo · since 16 Nov$/.test(txt), txt);
     });
     test('Partner payments come off completed-month spending, not income', () => {
         const raw = base();

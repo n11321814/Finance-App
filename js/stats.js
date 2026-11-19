@@ -7,7 +7,7 @@ const LIVING_IN_HOME_CATEGORIES = ['Food', 'Living'];
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // Average week of Food + Living (your share) from appData.livingInHomeSince
-// to today, less partner payments over the same days. Null before it starts.
+// to today. Partner payments don't come off this. Null before it starts.
 function getLivingInHomeCost() {
     const fyStart = toLocalISODate(FY_START);
     const since = (appData.livingInHomeSince || '') > fyStart ? appData.livingInHomeSince : fyStart;
@@ -18,11 +18,10 @@ function getLivingInHomeCost() {
     const spent = getFYExpenses()
         .filter(e => e.date >= since && e.date <= end && names.includes((e.category || '').trim().toLowerCase()))
         .reduce((s, e) => s + myAmount(e), 0);
-    const partner = partnerPaidBetween(since, end);
     const days = Math.round((parseLocalDate(end) - parseLocalDate(since)) / 86400000) + 1;
     const weeks = Math.max(1, days / 7);
     const d = parseLocalDate(since);
-    return { weekly: (spent - partner) / weeks, spent, partner, weeks, sinceLabel: `${d.getDate()} ${SHORT_MONTHS[d.getMonth()]}` };
+    return { weekly: spent / weeks, spent, weeks, sinceLabel: `${d.getDate()} ${SHORT_MONTHS[d.getMonth()]}` };
 }
 
 function updateStats() {
@@ -73,12 +72,12 @@ function updateStats() {
         }
 
         // Living in Home Cost: your share of Food + Living since the start
-        // date, less what your partner paid, as an average week.
+        // date, as an average week.
         const living = getLivingInHomeCost();
         let livingInHomeHtml = '<span class="currency">$</span>—';
         if (living) {
             livingInHomeHtml = `<span class="currency">$</span>${Math.round(living.weekly).toLocaleString('en-AU')}<span style="font-size:11px;color:var(--text-muted);font-weight:500;">/wk</span>
-                <div class="stat-sub">$${Math.round(living.weekly * 52 / 12).toLocaleString('en-AU')}/mo · since ${living.sinceLabel}${living.partner ? ` · partner paid $${Math.round(living.partner).toLocaleString('en-AU')}` : ''}</div>`;
+                <div class="stat-sub">$${Math.round(living.weekly * 52 / 12).toLocaleString('en-AU')}/mo · since ${living.sinceLabel}</div>`;
         }
 
         // Net worth & hours
