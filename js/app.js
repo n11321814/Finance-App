@@ -11,6 +11,7 @@ let appData = normalizeAppData(DEFAULT_DATA);
 function initApp() {
     // Hide figures is remembered on this device only
     setPrivacy(getPrivacyPreference());
+    setStatsCollapsed(getStatsPreference());
 
     syncFinancialYear();
     markCleanAfterRender = true;
@@ -152,6 +153,32 @@ function setPrivacy(on) {
 
 function togglePrivacy() {
     setPrivacy(!document.body.classList.contains('privacy'));
+}
+
+// ================================================================
+// SUMMARY BAR - the stats at the top can be collapsed. Remembered on
+// this device only. Starts collapsed on phones, open on bigger screens.
+// ================================================================
+
+const STATS_KEY = 'financeTrackerStatsCollapsed';
+
+function getStatsPreference() {
+    try {
+        const saved = localStorage.getItem(STATS_KEY);
+        if (saved === '1' || saved === '0') return saved === '1';
+    } catch (e) {}
+    return !!(window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
+}
+
+function setStatsCollapsed(on, remember) {
+    document.body.classList.toggle('stats-collapsed', on);
+    const btn = document.getElementById('statsToggle');
+    if (btn) btn.setAttribute('aria-expanded', on ? 'false' : 'true');
+    if (remember) { try { localStorage.setItem(STATS_KEY, on ? '1' : '0'); } catch (e) {} }
+}
+
+function toggleStats() {
+    setStatsCollapsed(!document.body.classList.contains('stats-collapsed'), true);
 }
 
 // ================================================================

@@ -70,6 +70,9 @@
 
 
     <!-- STATS -->
+    <button class="stats-toggle" id="statsToggle" onclick="toggleStats()" aria-expanded="true" aria-controls="statsGrid">
+        <span>Summary</span><span class="stats-toggle-icon" aria-hidden="true">▾</span>
+    </button>
     <div class="stats-grid" id="statsGrid">
         <div class="stat-card">
             <div class="stat-label">Average Weekly Hours</div>
@@ -254,14 +257,36 @@
                     <input type="checkbox" id="expenseDeductible" />
                     <label for="expenseDeductible">Deductible</label>
                 </div>
+                <div class="checkbox-group" title="Someone else pays part. You pay half, which you can change after adding.">
+                    <input type="checkbox" id="expenseSplit" />
+                    <label for="expenseSplit">Split</label>
+                </div>
                 <button class="btn btn-danger" onclick="addExpense()">+ Add</button>
             </div>
             <div class="form-row" style="align-items:center;margin-bottom:6px;">
                 <span style="font-size:12px;color:var(--text-muted);">Show</span>
                 <select id="expenseFilterCategory" style="max-width:180px;" onchange="setExpenseFilter(this.value)"></select>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="expenseFilterSplit" onchange="setExpenseSplitFilter(this.checked)" />
+                    <label for="expenseFilterSplit">Split only</label>
+                </div>
                 <span id="expenseFilterTotal" class="private" style="font-size:12px;color:var(--text-muted);"></span>
             </div>
             <div class="scroll-y" id="expenseList"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Partner Payments</div>
+                <span id="partnerTotal" class="private" style="font-size:12px;color:var(--text-muted);"></span>
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">For food, power, water and internet. Taken off your costs.</div>
+            <div class="form-row">
+                <input type="date" id="partnerDate" style="max-width:140px;" />
+                <input type="number" id="partnerAmount" placeholder="Amount ($)" step="0.01" style="max-width:110px;" />
+                <button class="btn btn-primary" onclick="addPartnerPayment()">+ Add</button>
+            </div>
+            <div class="scroll-y" id="partnerPaymentList" style="max-height:220px;"></div>
         </div>
 
         <div class="card">

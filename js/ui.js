@@ -11,6 +11,7 @@ function updateUI() {
     try { renderIncome(); } catch(e) { console.warn('renderIncome failed:', e); }
     try { renderIncomeSummary(); } catch(e) { console.warn('renderIncomeSummary failed:', e); }
     try { renderExpenses(); } catch(e) { console.warn('renderExpenses failed:', e); }
+    try { renderPartnerPayments(); } catch(e) { console.warn('renderPartnerPayments failed:', e); }
     try { renderCategoryList(); } catch(e) { console.warn('renderCategoryList failed:', e); }
     try { populateCategorySelect(); } catch(e) { console.warn('populateCategorySelect failed:', e); }
     try { renderBudgetInput(); } catch(e) { console.warn('renderBudgetInput failed:', e); }

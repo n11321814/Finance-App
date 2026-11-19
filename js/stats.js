@@ -6,6 +6,25 @@
 const LIVING_IN_HOME_CATEGORIES = ['Food', 'Living'];
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+// Average week of Food + Living (your share) from appData.livingInHomeSince
+// to today, less partner payments over the same days. Null before it starts.
+function getLivingInHomeCost() {
+    const fyStart = toLocalISODate(FY_START);
+    const since = (appData.livingInHomeSince || '') > fyStart ? appData.livingInHomeSince : fyStart;
+    const today = toLocalISODate(new Date());
+    const end = today < toLocalISODate(FY_END) ? today : toLocalISODate(FY_END);
+    if (since > end) return null;
+    const names = LIVING_IN_HOME_CATEGORIES.map(n => n.toLowerCase());
+    const spent = getFYExpenses()
+        .filter(e => e.date >= since && e.date <= end && names.includes((e.category || '').trim().toLowerCase()))
+        .reduce((s, e) => s + myAmount(e), 0);
+    const partner = partnerPaidBetween(since, end);
+    const days = Math.round((parseLocalDate(end) - parseLocalDate(since)) / 86400000) + 1;
+    const weeks = Math.max(1, days / 7);
+    const d = parseLocalDate(since);
+    return { weekly: (spent - partner) / weeks, spent, partner, weeks, sinceLabel: `${d.getDate()} ${SHORT_MONTHS[d.getMonth()]}` };
+}
+
 function updateStats() {
     try {
         // Average hours and pay over finished weeks only, so this week and
@@ -53,22 +72,13 @@ function updateStats() {
             if (avg.monthsWithoutPay.length) realWarning = ` <span style="color:var(--amber);" title="No pay logged for ${escapeHtml(avg.monthsWithoutPay.join(', '))}">⚠</span>`;
         }
 
-        // Living in Home Cost: average monthly spend on Food + Living only,
-        // over the same completed months as Real.
+        // Living in Home Cost: your share of Food + Living since the start
+        // date, less what your partner paid, as an average week.
+        const living = getLivingInHomeCost();
         let livingInHomeHtml = '<span class="currency">$</span>—';
-        if (avg) {
-            const keys = new Set(avg.months.map(m => m.key));
-            const byCat = sumExpensesByCategory(getFYExpenses().filter(e => keys.has(monthKey(parseLocalDate(e.date)))));
-            const parts = LIVING_IN_HOME_CATEGORIES.map(name => {
-                // Match the category name regardless of capitals or stray spaces
-                const total = Object.entries(byCat)
-                    .filter(([cat]) => cat.trim().toLowerCase() === name.toLowerCase())
-                    .reduce((s, [, v]) => s + v, 0);
-                return { name, monthly: total / avg.count };
-            });
-            const monthly = parts.reduce((s, p) => s + p.monthly, 0);
-            livingInHomeHtml = `<span class="currency">$</span>${Math.round(monthly).toLocaleString('en-AU')}<span style="font-size:11px;color:var(--text-muted);font-weight:500;">/mo</span>
-                <div class="stat-sub">${parts.map(p => `${p.name} $${Math.round(p.monthly).toLocaleString('en-AU')}`).join(' + ')}</div>`;
+        if (living) {
+            livingInHomeHtml = `<span class="currency">$</span>${Math.round(living.weekly).toLocaleString('en-AU')}<span style="font-size:11px;color:var(--text-muted);font-weight:500;">/wk</span>
+                <div class="stat-sub">$${Math.round(living.weekly * 52 / 12).toLocaleString('en-AU')}/mo · since ${living.sinceLabel}${living.partner ? ` · partner paid $${Math.round(living.partner).toLocaleString('en-AU')}` : ''}</div>`;
         }
 
         // Net worth & hours

@@ -69,7 +69,7 @@ function renderMonthlyBudgetHistory() {
         const cat = e.category || 'Other';
         const m = d.getMonth();
         spend[cat] = spend[cat] || {};
-        spend[cat][m] = (spend[cat][m] || 0) + (e.amount || 0);
+        spend[cat][m] = (spend[cat][m] || 0) + myAmount(e);
     });
 
     const now = new Date();

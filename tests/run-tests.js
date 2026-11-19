@@ -24,6 +24,75 @@ function normalizeForTest(app, raw) {
     return JSON.parse(app.run('JSON.stringify(normalizeAppData(__raw))'));
 }
 
+
+// ---------- split expenses, partner payments, Living in Home Cost ----------
+function splitPartnerTests() {
+    const app = makeApp('2026-11-29T09:00:00+10:00');   // Sunday: 16-29 Nov is exactly 2 weeks
+    const base = () => {
+        const raw = sampleData();
+        raw.categories.push('Living');
+        raw.expenses.push({ date: '2026-11-10', category: 'Living', amount: 999 },          // before 16 Nov: not counted
+            { date: '2026-11-17', category: 'Living', amount: 300, split: true },           // half = 150
+            { date: '2026-11-20', category: 'Food', amount: 100, split: true, myShare: 30 }); // custom share
+        return raw;
+    };
+    test('Split: only your share counts, full cost kept', () => {
+        app.load(base());
+        eq(app.run("myAmount(appData.expenses.find(e => e.amount === 300))"), 150, 'half by default');
+        eq(app.run("myAmount(appData.expenses.find(e => e.amount === 100))"), 30, 'custom share');
+        eq(app.run("appData.expenses.find(e => e.amount === 300).amount"), 300, 'full cost kept');
+        eq(app.run("sumExpensesByCategory(getFYExpenses()).Living"), 999 + 150, 'category total uses your share');
+    });
+    test('Split: toggling sets half, changing the cost keeps the proportion', () => {
+        app.load(base());
+        app.run("toggleSplitExpense(appData.expenses.findIndex(e => e.amount === 999))");
+        eq(app.run("appData.expenses.find(e => e.amount === 999).myShare"), 499.5);
+        app.run("updateExpense(appData.expenses.findIndex(e => e.amount === 100), 'amount', '200')");
+        eq(app.run("myAmount(appData.expenses.find(e => e.amount === 200))"), 60, '30% kept');
+        app.run("updateExpense(appData.expenses.findIndex(e => e.amount === 200), 'myShare', '500')");
+        eq(app.run("myAmount(appData.expenses.find(e => e.amount === 200))"), 200, 'share capped at the cost');
+    });
+    test('Split filter shows only split items with your share and the full cost', () => {
+        app.load(base());
+        app.run('setExpenseSplitFilter(true)');
+        eq(app.els.expenseFilterTotal.textContent, '2 items · $180 yours this FY (of $400)');
+        ok(!/value="999"/.test(app.els.expenseList.innerHTML), 'unsplit hidden');
+        app.run('setExpenseSplitFilter(false)');
+    });
+    test('Living in Home Cost: per week since 16 Nov, less partner payments', () => {
+        const raw = base();
+        raw.partnerPayments = [{ date: '2026-11-16', amount: 60 }, { date: '2026-11-23', amount: 60 }, { date: '2026-11-02', amount: 60 }];
+        app.load(raw);
+        // Food from the sample on 1 Nov is before the 16th. Spent 150 + 30, partner 120 since 16 Nov, over 2 weeks = $30/wk
+        const txt = strip(app.els.livingInHomeCost.innerHTML);
+        ok(/^\$ 30 \/wk \$130\/mo · since 16 Nov · partner paid \$120$/.test(txt), txt);
+    });
+    test('Partner payments come off completed-month spending, not income', () => {
+        const raw = base();
+        const before = (app.load(raw), app.run('getCompletedMonthsAverage()'));
+        raw.partnerPayments = [{ date: '2026-10-05', amount: 400 }];
+        app.load(raw);
+        const after = app.run('getCompletedMonthsAverage()');
+        near(before.monthlyExpenses - after.monthlyExpenses, 400 / after.count, 0.01, 'spending');
+        near(before.monthlyGross, after.monthlyGross, 0.001, 'income unchanged');
+    });
+    test('Partner payments: add uses today and remembers the amount', () => {
+        app.load(base());
+        app.el('partnerDate').value = '2026-11-28'; app.el('partnerAmount').value = '75';
+        app.run('addPartnerPayment()');
+        eq(app.run('appData.partnerPayments.length'), 1);
+        eq(app.el('partnerDate').value, '2026-11-29', 'date reset to today');
+        eq(String(app.el('partnerAmount').value), '75', 'amount kept');
+        ok(/\$75 this FY/.test(app.el('partnerTotal').textContent));
+    });
+    test('New year carries the start date but not the payments', () => {
+        const raw = base(); raw.partnerPayments = [{ date: '2026-11-16', amount: 60 }];
+        app.load(raw);
+        const next = app.run('buildNewYearData(appData, 2027)');
+        eq(next.partnerPayments.length, 0); eq(next.livingInHomeSince, '2026-11-16');
+    });
+}
+
 // ---------- fake page ----------
 function makeApp(nowIso, fetchImpl) {
     const RealDate = Date;
@@ -202,16 +271,6 @@ function ok(cond, msg) { if (!cond) throw new Error(msg || 'condition false'); }
         app.load(sampleData());
         const withTheiss = nums('weeklyDisposable');
         near(withTheiss[0] - withTheiss[1], without[0] - without[1], 1);
-    });
-    test('Living in Home Cost averages Food + Living only, over completed months', () => {
-        const raw = sampleData();
-        raw.categories.push('Living'); raw.budgets.Living = 400;
-        raw.expenses.push({ date: '2026-08-14', category: 'Living', amount: 300 }, { date: '2026-09-14', category: 'living ', amount: 120 },
-            { date: '2026-11-01', category: 'Living', amount: 999 });   // current month - not counted yet
-        app.load(raw);
-        // Food $400 x 4 months + Living $420 over Jul-Oct = $2,020 / 4 = $505/month
-        const txt = strip(app.els.livingInHomeCost.innerHTML);
-        ok(/\$ 505 \/mo Food \$400 \+ Living \$105$/.test(txt), txt);
     });
     test('Net worth in the top bar includes the loan straight after opening a file', () => {
         const raw = sampleData();
@@ -1379,7 +1438,7 @@ module.exports.pending = Promise.all([module.exports.pending, sharingChecks]);
         app.run("setExpenseFilter('Phone')");
         const list = app.els.expenseList.innerHTML;
         ok(!/value="Food" selected/.test(list) && /Phone \(not in list\)/.test(list), 'only Phone rows');
-        eq(app.els.expenseFilterTotal.textContent, '1 item · $150 this FY');
+        eq(app.els.expenseFilterTotal.textContent, '1 item · $150 yours this FY');
         app.run("setExpenseFilter('')");
         ok(/value="Food" selected/.test(app.els.expenseList.innerHTML) && app.els.expenseFilterTotal.textContent === '', 'back to all');
     });
@@ -1566,6 +1625,8 @@ const autosaveChecks = (async () => {
 module.exports.pending = Promise.all([module.exports.pending, autosaveChecks]);
 
 // ---------- report ----------
+splitPartnerTests();
+
 (module.exports.pending || Promise.resolve()).then(() => {
     const failed = results.filter(r => !r[0]);
     results.forEach(([pass, name, err]) => console.log(`${pass ? '  ok  ' : '  FAIL'} ${name}${err ? `\n         ${err}` : ''}`));

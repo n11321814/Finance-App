@@ -125,7 +125,7 @@ function renderDeductibleList() {
         return;
     }
     
-    const total = deductibles.reduce((s, e) => s + (e.amount || 0), 0);
+    const total = deductibles.reduce((s, e) => s + myAmount(e), 0);
     
     container.innerHTML = `
         <div style="margin-bottom:12px;padding:10px 14px;background:rgba(16,185,129,0.06);border-radius:8px;border:1px solid rgba(16,185,129,0.1);display:flex;justify-content:space-between;">
@@ -140,7 +140,7 @@ function renderDeductibleList() {
                     <span class="label">${escapeHtml(e.description || e.category || 'Expense')}</span>
                 </div>
                 <div class="right">
-                    <span class="amount green">$${(e.amount || 0).toFixed(2)}</span>
+                    <span class="amount green">$${myAmount(e).toFixed(2)}</span>
                 </div>
             </div>
         `).join('')}

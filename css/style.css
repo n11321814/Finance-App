@@ -334,6 +334,20 @@ select {
     margin-bottom: 24px;
 }
 
+/* Summary toggle: hides the stats so each tab starts at the top */
+.stats-toggle {
+    display: flex; align-items: center; justify-content: space-between;
+    width: 100%; margin: 0 0 8px; padding: 6px 12px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    color: var(--text-muted); font: inherit; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer;
+}
+.stats-toggle:hover { color: var(--text-primary); }
+.stats-toggle-icon { transition: transform 0.15s; }
+body.stats-collapsed .stats-toggle-icon { transform: rotate(-90deg); }
+body.stats-collapsed .stats-grid { display: none; }
+body.stats-collapsed .stats-toggle { margin-bottom: 14px; }
+
 .stat-card {
     background: var(--surface);
     padding: 16px 18px 14px;
@@ -1835,6 +1849,7 @@ body.privacy :is(
 /* Someone you've shared with sees only the Shopping tab */
 body.member-mode .tabs .tab:not([data-tab="shopping"]),
 body.member-mode .stats-grid,
+body.member-mode .stats-toggle,
 body.member-mode #privacyBtn,
 body.member-mode .topbar-right .btn,
 body.member-mode #yearPicker,
@@ -1953,3 +1968,9 @@ button.shop-sec-head { cursor: pointer; }
 .shop-remove { opacity: 0.45; }
 .shop-row:hover .shop-remove { opacity: 1; }
 .shop-card-btns { display: flex; gap: 6px; }
+
+/* Split expenses: your share sits in the row, the ½ button shows when on */
+.split-tag { display: inline-flex; align-items: center; gap: 4px; color: var(--c-cyan, var(--text-primary)); }
+.split-share-input { width: 72px; }
+.split-btn { font-size: 12px; padding: 2px 6px; }
+.split-btn.on { border-color: var(--c-cyan, var(--text-primary)); color: var(--c-cyan, var(--text-primary)); }

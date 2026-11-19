@@ -13,7 +13,7 @@ function renderExpenseBreakdown() {
     const categories = {};
     getFYExpenses().forEach(e => {
         const cat = e.category || 'Other';
-        categories[cat] = (categories[cat] || 0) + (e.amount || 0);
+        categories[cat] = (categories[cat] || 0) + myAmount(e);
     });
     const entries = Object.entries(categories).sort((a,b) => b[1] - a[1]);
     const total = entries.reduce((s, e) => s + e[1], 0);
@@ -92,7 +92,7 @@ function getMonthlyExpenseSeries(category) {
         const items = expenses.filter(e => monthKey(parseLocalDate(e.date)) === key && (category === 'All' || (e.category || 'Other') === category));
         months.push({
             key, year: d.getFullYear(), month: d.getMonth(),
-            total: items.reduce((s, e) => s + (e.amount || 0), 0),
+            total: items.reduce((s, e) => s + myAmount(e), 0),
             byCategory: sumExpensesByCategory(items),
             partial: d >= currentMonthStart
         });

@@ -108,6 +108,11 @@ const DEFAULT_DATA = {
     // Weeks the app has added for you (so a deleted one isn't added back)
     incomeAutoAdded: [],
     expenses: [],
+    // What your partner pays you towards food, power, water and internet.
+    // Taken off your costs, never counted as taxable income.
+    partnerPayments: [],
+    // Living in Home Cost counts from this date (a Monday)
+    livingInHomeSince: '2026-11-16',
     categories: DEFAULT_CATEGORIES,
     budgets: {
         'Food': 400,
@@ -219,9 +224,25 @@ function sumExpensesByCategory(expenses) {
     const totals = {};
     expenses.forEach(e => {
         const cat = e.category || 'Other';
-        totals[cat] = (totals[cat] || 0) + (e.amount || 0);
+        totals[cat] = (totals[cat] || 0) + myAmount(e);
     });
     return totals;
+}
+
+// The part of an expense you pay. A split expense keeps its full cost
+// (and category) but only your share counts in your figures.
+function myAmount(e) {
+    const amount = e.amount || 0;
+    if (!e.split) return amount;
+    const share = typeof e.myShare === 'number' && isFinite(e.myShare) ? e.myShare : amount / 2;
+    return Math.min(Math.max(share, 0), Math.max(amount, 0));
+}
+
+// Partner payments dated from..to (inclusive, 'YYYY-MM-DD' strings)
+function partnerPaidBetween(from, to) {
+    return (appData.partnerPayments || [])
+        .filter(p => p.date && p.date >= from && p.date <= to)
+        .reduce((s, p) => s + (p.amount || 0), 0);
 }
 
 // ================================================================
@@ -257,7 +278,7 @@ function getSpendingCategories() {
 // Deductible expenses dated in this FY (excluded-from-totals ones still
 // count - excluding only affects budgets, not tax)
 function getFYDeductibleTotal() {
-    return (appData.expenses || []).filter(e => e.deductible && isInFY(e.date)).reduce((s, e) => s + (e.amount || 0), 0);
+    return (appData.expenses || []).filter(e => e.deductible && isInFY(e.date)).reduce((s, e) => s + myAmount(e), 0);
 }
 
 // The one tax rate used everywhere: projected tax for the year (after
@@ -305,7 +326,9 @@ function getCompletedMonthsAverage() {
     const keys = new Set(months.map(m => m.key));
     const paid = getPaidIncomeByMonth();
     const gross = months.reduce((s, m) => s + (paid[m.key] || 0), 0);
-    const expenses = getFYExpenses().filter(e => keys.has(monthKey(parseLocalDate(e.date)))).reduce((s, e) => s + (e.amount || 0), 0);
+    // Your share of spending, less what your partner paid in those months
+    const partner = (appData.partnerPayments || []).filter(p => p.date && keys.has(monthKey(parseLocalDate(p.date)))).reduce((s, p) => s + (p.amount || 0), 0);
+    const expenses = getFYExpenses().filter(e => keys.has(monthKey(parseLocalDate(e.date)))).reduce((s, e) => s + myAmount(e), 0) - partner;
     const net = gross * (1 - getFYTaxRate());
     const n = months.length;
     const weeks = months.reduce((s, m) => s + m.weeks, 0);
@@ -314,7 +337,7 @@ function getCompletedMonthsAverage() {
     return {
         months, count: n, weeks, monthsWithoutPay,
         monthlyGross: gross / n, monthlyNet: net / n, monthlyExpenses: expenses / n,
-        monthlySurplus: (net - expenses) / n,
+        monthlySurplus: (net - expenses) / n, monthlyPartner: partner / n,
         label: n === 1 ? months[0].key : `${months[0].key} to ${months[n - 1].key}`
     };
 }
@@ -445,6 +468,8 @@ function buildNewYearData(old, newYear) {
         financialYear: newYear,
         income: carriedIncome,
         expenses: [],
+        partnerPayments: [],
+        livingInHomeSince: old.livingInHomeSince,
         homeOfficeLog: [],
         categories: copy(old.categories),
         budgets: copy(old.budgets),
@@ -540,8 +565,14 @@ function normalizeAppData(rawData) {
         ...e,
         amount: toNumber(e.amount),
         deductible: e.deductible || false,
-        excludeFromTotals: e.excludeFromTotals || false
+        excludeFromTotals: e.excludeFromTotals || false,
+        split: !!e.split,
+        myShare: e.split && e.myShare !== null && e.myShare !== undefined && e.myShare !== '' ? toNumber(e.myShare) : null
     }));
+    normalized.partnerPayments = (normalized.partnerPayments || [])
+        .filter(p => p && p.date)
+        .map(p => ({ id: p.id || genId(), date: String(p.date), amount: toNumber(p.amount) }));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized.livingInHomeSince || '')) normalized.livingInHomeSince = DEFAULT_DATA.livingInHomeSince;
 
     normalized.assets = (normalized.assets || []).map(a => ({
         ...a,

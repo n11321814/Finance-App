@@ -5,9 +5,16 @@
 let excludeExcludedExpenses = true;
 // Category shown in the expense list ('' = all). Only filters the list.
 let expenseFilterCategory = '';
+// Show only split expenses
+let expenseFilterSplit = false;
 
 function setExpenseFilter(category) {
     expenseFilterCategory = category || '';
+    renderExpenses();
+}
+
+function setExpenseSplitFilter(on) {
+    expenseFilterSplit = !!on;
     renderExpenses();
 }
 
@@ -107,14 +114,20 @@ function renderExpenses() {
 
     const shown = allExpenses
         .map((e, idx) => ({ e, idx }))
-        .filter(({ e }) => !expenseFilterCategory || (e.category || 'Other') === expenseFilterCategory);
-    if (totalEl && expenseFilterCategory) {
-        // This FY, not counting excluded ones
-        const fyTotal = shown.filter(({ e }) => !e.excludeFromTotals && isInFY(e.date)).reduce((t, { e }) => t + (e.amount || 0), 0);
-        totalEl.textContent = `${shown.length} item${shown.length === 1 ? '' : 's'} · $${fyTotal.toLocaleString('en-AU', { maximumFractionDigits: 0 })} this FY`;
+        .filter(({ e }) => !expenseFilterCategory || (e.category || 'Other') === expenseFilterCategory)
+        .filter(({ e }) => !expenseFilterSplit || e.split);
+    const splitBox = document.getElementById('expenseFilterSplit');
+    if (splitBox) splitBox.checked = expenseFilterSplit;
+    if (totalEl && (expenseFilterCategory || expenseFilterSplit)) {
+        // This FY, not counting excluded ones: your share
+        const fy = shown.filter(({ e }) => !e.excludeFromTotals && isInFY(e.date));
+        const mine = fy.reduce((t, { e }) => t + myAmount(e), 0);
+        const full = fy.reduce((t, { e }) => t + (e.amount || 0), 0);
+        const fmt = n => '$' + n.toLocaleString('en-AU', { maximumFractionDigits: 0 });
+        totalEl.textContent = `${shown.length} item${shown.length === 1 ? '' : 's'} · ${fmt(mine)} yours this FY` + (Math.abs(full - mine) > 0.005 ? ` (of ${fmt(full)})` : '');
     }
     if (shown.length === 0) {
-        list.innerHTML = `<div class="empty-state"><div class="icon">💳</div><div class="message">No ${escapeHtml(expenseFilterCategory)} expenses</div></div>`;
+        list.innerHTML = `<div class="empty-state"><div class="icon">💳</div><div class="message">No ${expenseFilterSplit ? 'split ' : ''}${escapeHtml(expenseFilterCategory)} expenses</div></div>`;
         return;
     }
 
@@ -139,6 +152,9 @@ function renderExpenses() {
                        placeholder="Description" onchange="updateExpense(${idx}, 'description', this.value)">
                 ${e.deductible ? '<span class="tag deductible">💰 Deductible</span>' : ''}
                 ${isExcluded ? '<span class="tag" style="background:rgba(239,68,68,0.15);color:var(--red);">⛔ Excluded</span>' : ''}
+                ${e.split ? `<span class="tag split-tag" title="Your share. Only this counts in your figures.">Split · you
+                    <span class="currency-input-wrap"><span class="currency-prefix">$</span><input class="inline-edit split-share-input private" type="number" step="0.01" min="0" value="${Number(myAmount(e).toFixed(2))}"
+                        onchange="updateExpense(${idx}, 'myShare', this.value)"></span></span>` : ''}
             </div>
             <div class="right">
                 <span class="currency-input-wrap">
@@ -146,6 +162,7 @@ function renderExpenses() {
                     <input class="inline-edit amount-input red" type="number" step="0.01" value="${(e.amount || 0)}" 
                            onchange="updateExpense(${idx}, 'amount', this.value)" style="width:90px;">
                 </span>
+                <button class="btn btn-outline btn-sm split-btn${e.split ? ' on' : ''}" onclick="toggleSplitExpense(${idx})" title="${e.split ? 'Split: only your share counts. Click to stop splitting' : 'Split with someone (you pay half)'}">½</button>
                 <button class="btn btn-outline btn-sm" onclick="toggleExcludeExpense(${idx})" title="Toggle exclude from totals" style="font-size:12px;padding:2px 6px;border-color:${isExcluded ? 'var(--red)' : 'var(--border-light)'};">
                     ${isExcluded ? '⛔' : '⭕'}
                 </button>
@@ -161,9 +178,27 @@ function toggleExcludeExpense(idx) {
     updateUI();
 }
 
+// Split on: your share starts at half. Split off: the full amount is yours.
+function toggleSplitExpense(idx) {
+    const e = appData.expenses[idx];
+    e.split = !e.split;
+    e.myShare = e.split ? Math.round((e.amount || 0) / 2 * 100) / 100 : null;
+    updateUI();
+}
+
 function updateExpense(idx, field, value) {
+    const e = appData.expenses[idx];
     if (field === 'amount') {
-        appData.expenses[idx][field] = parseFloat(value) || 0;
+        const amount = parseFloat(value) || 0;
+        // Keep the same split proportion when the cost changes
+        if (e.split) {
+            const ratio = e.amount > 0 ? myAmount(e) / e.amount : 0.5;
+            e.myShare = Math.round(amount * ratio * 100) / 100;
+        }
+        e.amount = amount;
+    } else if (field === 'myShare') {
+        const share = parseFloat(value);
+        e.myShare = isFinite(share) ? Math.min(Math.max(share, 0), e.amount || 0) : Math.round((e.amount || 0) / 2 * 100) / 100;
     } else {
         appData.expenses[idx][field] = value;
     }
@@ -176,15 +211,76 @@ function addExpense() {
     const description = document.getElementById('expenseDesc').value.trim() || category;
     const amount = parseFloat(document.getElementById('expenseAmount').value);
     const deductible = document.getElementById('expenseDeductible').checked;
+    const splitBox = document.getElementById('expenseSplit');
+    const split = !!(splitBox && splitBox.checked);
     if (!amount) return alert('Enter amount');
-    appData.expenses.push({ date, category, description, amount, deductible, excludeFromTotals: false });
+    appData.expenses.push({ date, category, description, amount, deductible, excludeFromTotals: false,
+        split, myShare: split ? Math.round(amount / 2 * 100) / 100 : null });
     document.getElementById('expenseDesc').value = '';
     document.getElementById('expenseAmount').value = '';
     document.getElementById('expenseDeductible').checked = false;
+    if (splitBox) splitBox.checked = false;
     updateUI();
 }
 
 function deleteExpense(idx) { appData.expenses.splice(idx, 1); updateUI(); }
+
+// ================================================================
+// PARTNER PAYMENTS - what your partner pays towards food, power, water
+// and internet. Taken off your costs (never taxable income).
+// ================================================================
+
+function renderPartnerPayments() {
+    const list = document.getElementById('partnerPaymentList');
+    if (!list) return;
+    const payments = (appData.partnerPayments || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+    // Ready for the next one: today, same amount as last time
+    const dateEl = document.getElementById('partnerDate');
+    if (dateEl && !dateEl.value) dateEl.value = toLocalISODate(new Date());
+    const amtEl = document.getElementById('partnerAmount');
+    if (amtEl && !amtEl.value && payments.length) amtEl.value = payments[0].amount;
+    const totalEl = document.getElementById('partnerTotal');
+    const fyTotal = payments.filter(p => isInFY(p.date)).reduce((s, p) => s + (p.amount || 0), 0);
+    if (totalEl) totalEl.textContent = payments.length ? `$${fyTotal.toLocaleString('en-AU', { maximumFractionDigits: 0 })} this FY` : '';
+    if (!payments.length) {
+        list.innerHTML = `<div class="empty-state"><div class="message">No payments yet</div></div>`;
+        return;
+    }
+    list.innerHTML = payments.map(p => `
+        <div class="list-item">
+            <div class="left"><span class="meta">${escapeHtml(p.date)}</span></div>
+            <div class="right">
+                <span class="currency-input-wrap">
+                    <span class="currency-prefix">$</span>
+                    <input class="inline-edit amount-input private" type="number" step="0.01" value="${p.amount || 0}"
+                           onchange="updatePartnerPayment('${escapeHtml(p.id)}', this.value)" style="width:90px;">
+                </span>
+                <button class="delete-btn" onclick="deletePartnerPayment('${escapeHtml(p.id)}')">✕</button>
+            </div>
+        </div>`).join('');
+}
+
+function addPartnerPayment() {
+    const date = document.getElementById('partnerDate').value;
+    const amount = parseFloat(document.getElementById('partnerAmount').value);
+    if (!date) return alert('Enter a date');
+    if (!amount) return alert('Enter amount');
+    appData.partnerPayments = appData.partnerPayments || [];
+    appData.partnerPayments.push({ id: genId(), date, amount });
+    document.getElementById('partnerDate').value = '';
+    updateUI();
+}
+
+function updatePartnerPayment(id, value) {
+    const p = (appData.partnerPayments || []).find(x => x.id === id);
+    if (p) p.amount = parseFloat(value) || 0;
+    updateUI();
+}
+
+function deletePartnerPayment(id) {
+    appData.partnerPayments = (appData.partnerPayments || []).filter(x => x.id !== id);
+    updateUI();
+}
 
 // ================================================================
 // EXPENSE SUMMARY
@@ -192,8 +288,9 @@ function deleteExpense(idx) { appData.expenses.splice(idx, 1); updateUI(); }
 
 function renderExpenseSummary() {
     const container = document.getElementById('expenseSummary');
-    const total = getFYExpenses().reduce((s, e) => s + (e.amount || 0), 0);
-    if (total === 0) {
+    const partnerFY = (appData.partnerPayments || []).filter(p => isInFY(p.date)).reduce((s, p) => s + (p.amount || 0), 0);
+    const total = getFYExpenses().reduce((s, e) => s + myAmount(e), 0) - partnerFY;
+    if (total === 0 && partnerFY === 0) {
         container.innerHTML = `<div class="empty-state"><div class="icon">📊</div><div class="message">No expense data yet</div></div>`;
         return;
     }
@@ -215,7 +312,7 @@ function renderExpenseSummary() {
 
     container.innerHTML = `
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;">
-            ${card('Total Spent', `$${total.toFixed(0)}`, 'var(--text-white)', 'this financial year')}
+            ${card('Total Spent', `$${total.toFixed(0)}`, 'var(--text-white)', partnerFY ? 'your share, after partner' : 'this financial year')}
             ${card('Monthly Average', monthlyAvg !== null ? `$${monthlyAvg.toFixed(0)}` : '—', 'var(--amber)', avg ? `over ${avg.count} completed month${avg.count === 1 ? '' : 's'}` : 'needs a completed month')}
             ${card('Projected Annual', projected !== null ? `$${projected.toFixed(0)}` : '—', ratioColor, 'monthly average × 12')}
             ${card('% of Income', expenseRatio !== null ? `${expenseRatio.toFixed(1)}%` : '—', ratioColor, 'of projected after-tax pay')}

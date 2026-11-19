@@ -37,7 +37,7 @@ function buildFinanceWorkbook(Excel, data) {
 
     // Summary
     const sum = sheet('Summary', [['Item', 34], ['Value', 18]]);
-    const totalExpenses = (data.expenses || []).filter(e => !e.excludeFromTotals).reduce((t, e) => t + (e.amount || 0), 0);
+    const totalExpenses = (data.expenses || []).filter(e => !e.excludeFromTotals).reduce((t, e) => t + myAmount(e), 0);
     const income = (data.income || []).reduce((t, w) => t + (w.shifts || []).reduce((s, sh) => s + shiftPay(sh), 0), 0);
     const assets = typeof getTotalAssets === 'function' ? getTotalAssets() : 0;
     const liabilities = (data.liabilities || []).reduce((t, l) => t + (l.value || 0), 0);
@@ -45,7 +45,8 @@ function buildFinanceWorkbook(Excel, data) {
         ['Financial year', `${fy}–${String(fy + 1).slice(-2)}${data.yearClosedOn ? ' (archived)' : ''}`],
         ['Backup made', asExcel(new Date())],
         ['Gross pay logged', income],
-        ['Expenses (not counting excluded)', totalExpenses],
+        ['Expenses, your share (not counting excluded)', totalExpenses],
+        ['Partner payments', (data.partnerPayments || []).reduce((t, x) => t + (x.amount || 0), 0)],
         ['Total assets (incl. savings and shares)', assets],
         ['Total liabilities', liabilities],
         ['Net worth', assets - liabilities],
@@ -65,9 +66,13 @@ function buildFinanceWorkbook(Excel, data) {
     }));
 
     // Expenses
-    const exp = sheet('Expenses', [['Date', 14, 'd mmm yyyy'], ['Category', 18], ['Description', 34], ['Amount', 12, money], ['Deductible', 11], ['Excluded from totals', 18]]);
+    const exp = sheet('Expenses', [['Date', 14, 'd mmm yyyy'], ['Category', 18], ['Description', 34], ['Amount', 12, money], ['Deductible', 11], ['Excluded from totals', 18], ['Split', 8], ['Your share', 12, money]]);
     (data.expenses || []).slice().sort((a, b) => (a.date || '').localeCompare(b.date || '')).forEach(e =>
-        put(exp, [date(e.date), e.category || '', e.description || '', e.amount || 0, e.deductible ? 'Yes' : '', e.excludeFromTotals ? 'Yes' : '']));
+        put(exp, [date(e.date), e.category || '', e.description || '', e.amount || 0, e.deductible ? 'Yes' : '', e.excludeFromTotals ? 'Yes' : '', e.split ? 'Yes' : '', myAmount(e)]));
+
+    // Partner payments
+    const pp = sheet('Partner payments', [['Date', 14, 'd mmm yyyy'], ['Amount', 12, money]]);
+    (data.partnerPayments || []).slice().sort((a, b) => a.date.localeCompare(b.date)).forEach(x => put(pp, [date(x.date), x.amount || 0]));
 
     // Budgets
     const bud = sheet('Budgets', [['Category', 22], ['Monthly budget', 16, money]]);
